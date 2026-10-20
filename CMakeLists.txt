@@ -62,3 +62,6 @@ if(DDASP_BUILD_TESTS)
   target_link_libraries(compiler_test ddasp_lib GTest::gtest_main)
   add_test(NAME compiler_test COMMAND compiler_test)
 endif()
+
+add_executable(ddasp app/ddasp/main.cpp)
+target_link_libraries(ddasp ddasp_lib)
