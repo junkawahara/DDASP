@@ -9,6 +9,9 @@ head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection,
 `#minimize` (optimal answer sets only, or cost functions), `#external` atoms
 (kept as free variables).
 
+**New to ASP or DDASP?** Read the beginner's guide (Japanese):
+[docs/GUIDE_ja.md](docs/GUIDE_ja.md) — 初心者向け利用ガイド(ASP の基本文法から ZDD の活用まで)。
+
 ## Build
 
 ```sh
