@@ -9,8 +9,8 @@ description = "Compile ASP programs into ZDDs/BDDs of their answer sets (KyotoDD
 requires-python = ">=3.8"
 dependencies = ["clingo>=5.5"]
 
-[project.optional-dependencies]
-dd = ["kyotodd"]
+# The kyotodd package (needed for Result.zdd / answer_sets()) is not on PyPI; install it
+# from the submodule: pip install --no-build-isolation -e third_party/KyotoDD/python
 
 [tool.scikit-build]
 cmake.source-dir = "."

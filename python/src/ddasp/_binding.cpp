@@ -10,6 +10,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -25,18 +26,96 @@ using namespace ddasp;
 namespace {
 
 bool g_initialized = false;
+std::mutex g_compile_mutex;  // KyotoDD is a process-wide singleton
 
-/** (Re)initialize KyotoDD so that every compilation starts from level 1. */
-void reset_kyotodd() {
+/**
+ * (Re)initialize KyotoDD so that every compilation starts from level 1.
+ * Returns false when the old instance had to be kept (levels then continue
+ * from the previous compilation); the caller warns.
+ */
+bool reset_kyotodd() {
+    bool fresh = true;
     if (g_initialized) {
         try {
             kyotodd::bddfinal();
         } catch (const std::exception&) {
-            return;  // live objects remain; keep the current instance
+            fresh = false;  // live objects remain; keep the current instance
         }
     }
-    if (kyotodd::bddinit(1 << 16) != 0) throw std::runtime_error("KyotoDD initialization failed");
-    g_initialized = true;
+    if (fresh) {
+        kyotodd::bddinit(1 << 16);  // throws on failure
+        g_initialized = true;
+    }
+    return fresh;
+}
+
+/** Plain C++ view of a compilation, built without the GIL. */
+struct PlainResult {
+    std::string zdd_bytes;
+    std::string bdd_bytes;
+    std::vector<int> levels;
+    std::map<int, int> level_to_atom;
+    std::map<int, int> atom_to_level;
+    std::map<int, std::string> names;
+    std::vector<std::string> fact_names;
+    std::vector<std::pair<std::string, std::vector<int> > > terms;
+    struct Cost {
+        int priority;
+        long long offset;
+        std::map<int, long long> level_weights;
+    };
+    std::vector<Cost> costs;
+    std::vector<long long> optimum;
+    std::string count;
+    CompileStats stats;
+    uint64_t zdd_nodes;
+    uint64_t bdd_nodes;
+    bool fresh_instance;
+};
+
+PlainResult compile_plain(const Program& program, const CompileOptions& opts) {
+    std::lock_guard<std::mutex> lock(g_compile_mutex);
+    PlainResult out;
+    out.fresh_instance = reset_kyotodd();
+    CompileResult res = compile(program, opts);
+    std::ostringstream zs, bs;
+    res.zdd.export_binary(zs);
+    res.bdd.export_binary(bs);
+    out.zdd_bytes = zs.str();
+    out.bdd_bytes = bs.str();
+    for (size_t i = 0; i < res.vars.size(); ++i) {
+        int lev = static_cast<int>(kyotodd::bddlevofvar(res.vars[i]));
+        out.levels.push_back(lev);
+        out.level_to_atom[lev] = res.var_to_atom[res.vars[i]];
+    }
+    for (size_t a = 1; a < res.atom_to_var.size(); ++a) {
+        if (res.atom_to_var[a] != 0) {
+            out.atom_to_level[static_cast<int>(a)] = static_cast<int>(kyotodd::bddlevofvar(res.atom_to_var[a]));
+        }
+    }
+    out.names = res.names;
+    out.fact_names = res.fact_names;
+    for (size_t t = 0; t < res.terms.size(); ++t) {
+        out.terms.push_back(std::make_pair(res.terms[t].name, res.terms[t].condition));
+    }
+    for (size_t c = 0; c < res.costs.size(); ++c) {
+        PlainResult::Cost cost;
+        cost.priority = res.costs[c].priority;
+        cost.offset = res.costs[c].offset;
+        for (size_t v = 1; v < res.costs[c].var_weights.size(); ++v) {
+            if (res.costs[c].var_weights[v] != 0) {
+                int lev = static_cast<int>(kyotodd::bddlevofvar(static_cast<kyotodd::bddvar>(v)));
+                cost.level_weights[lev] = res.costs[c].var_weights[v];
+            }
+        }
+        out.costs.push_back(cost);
+    }
+    out.optimum = res.optimum;
+    out.count = res.zdd.exact_count().to_string();
+    out.stats = res.stats;
+    out.zdd_nodes = res.zdd.raw_size();
+    out.bdd_nodes = res.bdd.raw_size();
+    return out;
 }
 
 std::vector<WeightedLiteral> to_weighted(const std::vector<std::pair<int, long long> >& lits) {
@@ -71,63 +150,59 @@ Result compile_py(const Program& program, const std::string& method, const std::
     opts.project_to_shown = project;
     opts.optimize = optimize;
 
-    reset_kyotodd();
-    Result out;
+    PlainResult plain;
     {
-        CompileResult res = compile(program, opts);
-        std::ostringstream zs, bs;
-        res.zdd.export_binary(zs);
-        res.bdd.export_binary(bs);
-        out.zdd_bytes = py::bytes(zs.str());
-        out.bdd_bytes = py::bytes(bs.str());
-        for (size_t i = 0; i < res.vars.size(); ++i) {
-            int lev = static_cast<int>(kyotodd::bddlevofvar(res.vars[i]));
-            out.levels.push_back(lev);
-            out.level_to_atom[lev] = res.var_to_atom[res.vars[i]];
-        }
-        for (size_t a = 1; a < res.atom_to_var.size(); ++a) {
-            if (res.atom_to_var[a] != 0) {
-                out.atom_to_level[static_cast<int>(a)] = static_cast<int>(kyotodd::bddlevofvar(res.atom_to_var[a]));
-            }
-        }
-        out.names = res.names;
-        out.fact_names = res.fact_names;
-        for (size_t t = 0; t < res.terms.size(); ++t) {
-            out.terms.push_back(std::make_pair(res.terms[t].name, res.terms[t].condition));
-        }
-        for (size_t c = 0; c < res.costs.size(); ++c) {
-            py::dict d;
-            d["priority"] = res.costs[c].priority;
-            d["offset"] = res.costs[c].offset;
-            py::dict w;
-            for (size_t v = 1; v < res.costs[c].var_weights.size(); ++v) {
-                if (res.costs[c].var_weights[v] != 0) {
-                    w[py::int_(static_cast<int>(kyotodd::bddlevofvar(static_cast<kyotodd::bddvar>(v))))] =
-                        res.costs[c].var_weights[v];
-                }
-            }
-            d["weights"] = w;
-            out.costs.push_back(d);
-        }
-        out.optimum = res.optimum;
-        out.count = res.zdd.exact_count().to_string();
-        const CompileStats& st = res.stats;
-        out.stats["order_time"] = st.order_time;
-        out.stats["models_time"] = st.models_time;
-        out.stats["supported_time"] = st.supported_time;
-        out.stats["conjoin_time"] = st.conjoin_time;
-        out.stats["unfounded_time"] = st.unfounded_time;
-        out.stats["convert_time"] = st.convert_time;
-        out.stats["optimize_time"] = st.optimize_time;
-        out.stats["project_time"] = st.project_time;
-        out.stats["models_nodes"] = st.models_nodes;
-        out.stats["stable_nodes"] = st.stable_nodes;
-        out.stats["zdd_nodes"] = res.zdd.raw_size();
-        out.stats["bdd_nodes"] = res.bdd.raw_size();
-        out.stats["peak_nodes"] = st.peak_nodes;
-        out.stats["groups"] = st.groups;
-        out.stats["aux_vars"] = st.aux_vars;
+        // The compilation only touches C++ data (the Program must not be modified
+        // meanwhile); release the GIL so that other Python threads can run.
+        py::gil_scoped_release release;
+        plain = compile_plain(program, opts);
     }
+    if (!plain.fresh_instance) {
+        PyErr_WarnEx(PyExc_RuntimeWarning,
+                     "ddasp: KyotoDD could not be reset (live objects remain); levels continue from the "
+                     "previous compilation", 1);
+    }
+
+    Result out;
+    out.zdd_bytes = py::bytes(plain.zdd_bytes);
+    out.bdd_bytes = py::bytes(plain.bdd_bytes);
+    out.levels = plain.levels;
+    out.level_to_atom = plain.level_to_atom;
+    out.atom_to_level = plain.atom_to_level;
+    out.names = plain.names;
+    out.fact_names = plain.fact_names;
+    out.terms = plain.terms;
+    for (size_t c = 0; c < plain.costs.size(); ++c) {
+        py::dict d;
+        d["priority"] = plain.costs[c].priority;
+        d["offset"] = plain.costs[c].offset;
+        py::dict w;
+        for (std::map<int, long long>::const_iterator it = plain.costs[c].level_weights.begin();
+             it != plain.costs[c].level_weights.end(); ++it) {
+            w[py::int_(it->first)] = it->second;
+        }
+        d["weights"] = w;
+        out.costs.push_back(d);
+    }
+    out.optimum = plain.optimum;
+    out.count = plain.count;
+    const CompileStats& st = plain.stats;
+    out.stats["order_time"] = st.order_time;
+    out.stats["models_time"] = st.models_time;
+    out.stats["supported_time"] = st.supported_time;
+    out.stats["conjoin_time"] = st.conjoin_time;
+    out.stats["unfounded_time"] = st.unfounded_time;
+    out.stats["convert_time"] = st.convert_time;
+    out.stats["optimize_time"] = st.optimize_time;
+    out.stats["project_time"] = st.project_time;
+    out.stats["models_nodes"] = st.models_nodes;
+    out.stats["stable_nodes"] = st.stable_nodes;
+    out.stats["zdd_nodes"] = plain.zdd_nodes;
+    out.stats["bdd_nodes"] = plain.bdd_nodes;
+    out.stats["peak_nodes"] = st.peak_nodes;
+    out.stats["atoms"] = st.atoms;
+    out.stats["groups"] = st.groups;
+    out.stats["aux_vars"] = st.aux_vars;
     return out;
 }
 

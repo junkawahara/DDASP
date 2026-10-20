@@ -109,3 +109,26 @@ def test_external_and_hidden():
     loop = ddasp.compile_text("{c}. a :- b. b :- a. a :- c.", project=False)
     assert loop.stats["aux_vars"] == 2
     assert loop.stats["groups"] == 1
+
+
+def test_observer_warns_on_ignored_statements():
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = ddasp.compile_text("{ a }. #heuristic a. [1,true] #show a/0.")
+    assert res.count == 2
+    assert any("heuristic" in str(w.message) for w in caught)
+
+
+def test_result_maps_are_plain_dicts():
+    res = ddasp.compile_text("{ a; b }. c :- a. #show a/0. #show b/0.")
+    assert res.names == {1: "a", 2: "b"}
+    assert set(res.level_to_atom.values()) == {1, 2}
+    assert set(res.atom_to_level) == {1, 2, 3}  # hidden c has a level too
+    assert res.level_name(res.levels[0]) == "a"
+    assert res.atom_name(3) == "__atom3"
+    assert res.stats["atoms"] == 3
+    assert [c["weights"] for c in ddasp.compile_text("{ a }. c :- a. #minimize{ 1 : c }. #show a/0.").costs] == [
+        {ddasp.compile_text("{ a }. c :- a. #minimize{ 1 : c }. #show a/0.").atom_to_level[2]: 1}
+    ]

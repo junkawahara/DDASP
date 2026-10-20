@@ -8,22 +8,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(pybind11 REQUIRED)
 
 set(DDASP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Path to the DDASP root directory")
-set(KYOTODD_ROOT "${DDASP_ROOT}/third_party/KyotoDD" CACHE PATH "Path to the KyotoDD root directory")
 
-# The extension carries its own copy of KyotoDD (a separate node table from the
-# kyotodd Python module); results cross over as export_binary bytes.
-file(GLOB KYOTODD_SOURCES "${KYOTODD_ROOT}/src/*.cpp")
-list(FILTER KYOTODD_SOURCES EXCLUDE REGEX "/main\\.cpp$")
-file(GLOB DDASP_SOURCES "${DDASP_ROOT}/src/*.cpp")
+# Build the DDASP core (and KyotoDD through it) with the project's own CMake
+# files, as position-independent static libraries linked into the extension.
+# The extension therefore carries its own KyotoDD node table, separate from the
+# kyotodd Python module's; results cross over as export_binary bytes.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(DDASP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory("${DDASP_ROOT}" ddasp_core EXCLUDE_FROM_ALL)
 
-pybind11_add_module(_core
-    src/ddasp/_binding.cpp
-    ${DDASP_SOURCES}
-    ${KYOTODD_SOURCES}
-)
-target_include_directories(_core PRIVATE "${DDASP_ROOT}/include" "${KYOTODD_ROOT}/include")
-if(EXISTS "${KYOTODD_ROOT}/third_party/TdZdd/include/tdzdd/DdSpec.hpp")
-  target_include_directories(_core SYSTEM PRIVATE "${KYOTODD_ROOT}/third_party/TdZdd/include")
-endif()
+pybind11_add_module(_core src/ddasp/_binding.cpp)
+target_link_libraries(_core PRIVATE ddasp_lib)
 
 install(TARGETS _core DESTINATION ddasp)

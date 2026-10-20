@@ -12,6 +12,7 @@ Grounding is done by clingo; the ground program is collected through a
 ``clingo`` observer into a :class:`Program` and compiled by the C++ core.
 """
 
+import warnings
 from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 import clingo
@@ -69,6 +70,26 @@ class Observer(_ClingoObserver):
         }
         self.program.add_external(atom, mapping.get(value, 0))
 
+    # Statements DDASP does not use are reported (once per kind), like the aspif reader does.
+    def _ignored(self, what: str) -> None:
+        warnings.warn(f"ddasp: {what} statement ignored", RuntimeWarning, stacklevel=3)
+
+    def assume(self, literals: Sequence[int]) -> None:
+        self._ignored("assumption")
+
+    def heuristic(self, atom: int, type_, bias: int, priority: int, condition: Sequence[int]) -> None:
+        self._ignored("heuristic")
+
+    def acyc_edge(self, node_u: int, node_v: int, condition: Sequence[int]) -> None:
+        self._ignored("edge")
+
+    def theory_atom(self, atom_id_or_zero: int, term_id: int, elements: Sequence[int]) -> None:
+        self._ignored("theory")
+
+    def theory_atom_with_guard(self, atom_id_or_zero: int, term_id: int, elements: Sequence[int],
+                               operator_id: int, right_hand_side_id: int) -> None:
+        self._ignored("theory")
+
 
 class Result:
     """Result of a compilation.
@@ -83,6 +104,11 @@ class Result:
         self._core = core
         self._zdd = None
         self._bdd = None
+        # The core maps are std::map objects that pybind11 converts to a new dict
+        # on every access; convert them once.
+        self._names = dict(core.names)
+        self._level_to_atom = dict(core.level_to_atom)
+        self._atom_to_level = dict(core.atom_to_level)
 
     # --- plain data -------------------------------------------------------
     @property
@@ -100,16 +126,18 @@ class Result:
 
     @property
     def level_to_atom(self) -> dict:
-        return dict(self._core.level_to_atom)
+        """Level -> atom id for the variables of the result (the shown atoms)."""
+        return dict(self._level_to_atom)
 
     @property
     def atom_to_level(self) -> dict:
-        return dict(self._core.atom_to_level)
+        """Atom id -> level for every atom of the program (hidden atoms included)."""
+        return dict(self._atom_to_level)
 
     @property
     def names(self) -> dict:
-        """Atom id -> name for the shown atoms."""
-        return dict(self._core.names)
+        """Atom id -> primary name of every named atom."""
+        return dict(self._names)
 
     @property
     def fact_names(self) -> List[str]:
@@ -129,7 +157,12 @@ class Result:
 
     @property
     def costs(self) -> list:
-        """One dict per #minimize priority (most important first): priority, offset, weights {level: w}."""
+        """One dict per #minimize priority (most important first): priority, offset, weights {level: w}.
+
+        The costs refer to the answer sets *before* projection: ``weights`` may
+        mention levels of hidden atoms (see ``atom_to_level``), which are not
+        variables of ``zdd`` when ``project=True``.
+        """
         return list(self._core.costs)
 
     @property
@@ -146,10 +179,10 @@ class Result:
         return dict(self._core.stats)
 
     def atom_name(self, atom: int) -> str:
-        return self._core.names.get(atom, f"__atom{atom}")
+        return self._names.get(atom, f"__atom{atom}")
 
     def level_name(self, level: int) -> str:
-        return self.atom_name(self._core.level_to_atom[level])
+        return self.atom_name(self._level_to_atom[level])
 
     # --- kyotodd objects --------------------------------------------------
     @property
@@ -188,9 +221,9 @@ class Result:
         import kyotodd
 
         facts = frozenset(self._core.fact_names)
-        names = self._core.names
+        names = self._names
         terms = self._core.terms
-        level_to_atom = self._core.level_to_atom
+        level_to_atom = self._level_to_atom
         for s in self.zdd.enumerate():
             atoms = frozenset(level_to_atom[kyotodd.to_level(v)] for v in s)
             shown = set(names[a] for a in atoms if a in names)
@@ -223,7 +256,13 @@ def compile(
 
 
 def compile_control(control: clingo.Control, parts=(("base", []),), **kwargs) -> Result:
-    """Ground ``parts`` of a ``clingo.Control`` (observer registered here) and compile."""
+    """Ground ``parts`` of a ``clingo.Control`` and compile the ground program.
+
+    The observer is registered here, so pass a control whose ``parts`` have not
+    been grounded yet (rules grounded earlier are not seen). Each call grounds
+    and registers again; to compile the same program several times, reuse the
+    :class:`Program` of an :class:`Observer` with :func:`compile` instead.
+    """
     observer = Observer()
     control.register_observer(observer)
     control.ground(list(parts))

@@ -63,6 +63,9 @@ def clingo_answer_sets(files, project=False, optimize=False):
         ctl.load(str(f))
     ctl.ground([("base", [])])
     externals = _external_atoms(ctl)
+    # ddasp optimizes over all assignments of the externals at once, whereas this
+    # loop would optimize per assignment; the two are not comparable.
+    assert not (optimize and externals), "optimize=True is not supported with #external atoms"
     result = Counter()
     for mask in range(1 << len(externals)):
         for i, sym in enumerate(externals):
