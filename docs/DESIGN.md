@@ -120,3 +120,8 @@ binary file in a fresh process, variable numbers equal levels.
 - 2026-10-20: C++ core + Python frontend (pybind11); ZDDs cross to the `kyotodd`
   Python module as `export_binary` bytes because each extension owns its own node table.
 - 2026-10-20: correctness is checked against clingo's enumeration (clingo in `.venv`).
+- 2026-10-20: the planned iterative loop-formula method was replaced by the SCC-local
+  unfounded-set method (see above); the user asked for a fast method, and the iterative
+  scheme cannot decide symbolically when all remaining models are stable.
+- 2026-10-20: default variable order = natural name order with barycenter placement of
+  unnamed atoms; constraints are conjoined in order of their top level.

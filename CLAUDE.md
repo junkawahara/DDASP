@@ -19,6 +19,17 @@
 - Do not modify files under `KyotoDD/` from this project. If a change to KyotoDD is
   needed, ask the user first.
 
+## Layout and workflow
+
+- C++ core: `include/ddasp/` (headers), `src/` (sources), `app/ddasp/main.cpp` (CLI),
+  `test/` (Google Test). Python package: `python/` (pybind11 `ddasp._core`,
+  `ddasp` wrapper, pytest suite in `python/tests/`). Design notes: `docs/DESIGN.md`.
+- Build and test: `cmake -S . -B build && cmake --build build -j && ctest --test-dir build`,
+  then `.venv/bin/pytest` (needs the venv described in `README.md`; after changing the
+  C++ core, reinstall the package with `.venv/bin/pip install --no-build-isolation -e python`).
+- The grounder in tests is `python -m clingo --mode=gringo` from the venv.
+- C++11, each source file within 2000 lines, snake_case for new functions.
+
 ## Rules
 
 - **Commit to git after every code change.** Each logical change gets its own commit
