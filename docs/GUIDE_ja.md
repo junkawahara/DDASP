@@ -15,11 +15,12 @@ ASP の文法は、このガイドで使う範囲を順に説明します。よ�
 4. [ASP の基本文法](#4-asp-の基本文法)
 5. [例題: N クイーン](#5-例題-n-クイーン)
 6. [例題: グラフ彩色](#6-例題-グラフ彩色)
-7. [最適化(#minimize)](#7-最適化-minimize)
-8. [コマンドラインオプション一覧](#8-コマンドラインオプション一覧)
-9. [Python から使う](#9-python-から使う)
-10. [ZDD を KyotoDD で活用する](#10-zdd-を-kyotodd-で活用する)
-11. [よくある質問とトラブルシューティング](#11-よくある質問とトラブルシューティング)
+7. [最適化(#minimize)](#7-最適化minimize)
+8. [さらに例題: 再帰・数え上げ・頂点被覆・ナップサック](#8-さらに例題-再帰数え上げ頂点被覆ナップサック)
+9. [コマンドラインオプション一覧](#9-コマンドラインオプション一覧)
+10. [Python から使う](#10-python-から使う)
+11. [ZDD を KyotoDD で活用する](#11-zdd-を-kyotodd-で活用する)
+12. [よくある質問とトラブルシューティング](#12-よくある質問とトラブルシューティング)
 
 ---
 
@@ -405,7 +406,137 @@ a
 
 ---
 
-## 8. コマンドラインオプション一覧
+## 8. さらに例題: 再帰・数え上げ・頂点被覆・ナップサック
+
+ここまでの文法で書ける、少し実用寄りの例を 4 つ紹介します。いずれも `examples/` にあります。
+
+### 8.1 再帰ルールと到達可能性(`examples/reachability.lp`)
+
+```prolog
+node(1..5).
+edge(1,2). edge(2,3). edge(3,1). edge(3,4). edge(4,5). edge(5,4).
+{ use(X,Y) : edge(X,Y) }.
+reach(1).
+reach(Y) :- reach(X), use(X,Y).
+% Every node must be reachable.
+:- node(X), not reach(X).
+#show use/2.
+```
+
+有向グラフの辺の部分集合 `use/2` を選び、「ノード 1 からすべてのノードに到達できる」
+ものだけを解とします。`reach/1` の **再帰ルール** がポイントです。
+
+```sh
+./build/ddasp --gringo "$G" --enumerate examples/reachability.lp
+```
+
+```
+answer sets: 4
+use(4,5) use(3,4) use(2,3) use(1,2)
+use(5,4) use(4,5) use(3,4) use(2,3) use(1,2)
+use(4,5) use(3,4) use(3,1) use(2,3) use(1,2)
+use(5,4) use(4,5) use(3,4) use(3,1) use(2,3) use(1,2)
+```
+
+辺 1→2→3→4→5 は必須で、`use(3,1)` と `use(5,4)` は自由なので 2² = 4 個です。
+注目してほしいのは、**`use(3,4)` のない解が存在しない**ことです。命題論理のモデル
+としてなら「`use(4,5)` と `use(5,4)` で `reach(4)` と `reach(5)` が互いに支え合う」
+割り当ても条件を満たしますが、ASP ではノード 1 からの根拠のない循環は認められません
+(4 節の `loop.lp` と同じ原理)。DDASP はこれを、グラウンドプログラムの強連結成分
+(SCC)ごとに「根拠のない集合」を排除することで扱います。`--stats` の `groups` と
+`aux vars` がその SCC の数と補助変数の数です。
+
+### 8.2 独立集合の数え上げ(`examples/independent_set.lp`)
+
+```prolog
+#const n = 4.
+vertex((X,Y)) :- X = 1..n, Y = 1..n.
+adj((X,Y),(X+1,Y)) :- vertex((X,Y)), X < n.
+adj((X,Y),(X,Y+1)) :- vertex((X,Y)), Y < n.
+{ in(V) : vertex(V) }.
+:- adj(U,V), in(U), in(V).
+#show in/1.
+```
+
+n×n の格子グラフで、隣り合う頂点を同時に選ばない頂点集合(独立集合)をすべて求めます。
+項は `(X,Y)` のようなタプルにできます。
+
+```sh
+./build/ddasp --gringo "$G" examples/independent_set.lp                      # answer sets: 1234
+./build/ddasp --gringo "$G --const n=8" --stats examples/independent_set.lp  # answer sets: 660647962955
+```
+
+8×8 では解が約 6600 億個ありますが、ZDD のノード数は 1347 で、構築は 0.01 秒程度です。
+解を 1 つずつ列挙するソルバでは不可能な規模でも、ZDD なら個数を厳密に数えたり
+(11 節)一様ランダムに 1 つ取り出したりできます。
+
+### 8.3 最小頂点被覆(`examples/vertex_cover.lp`)
+
+```prolog
+edge(1,2). edge(1,3). edge(2,3). edge(3,4). edge(4,5). edge(4,6). edge(5,6).
+vertex(X) :- edge(X,_).
+vertex(Y) :- edge(_,Y).
+{ in(X) : vertex(X) }.
+:- edge(X,Y), not in(X), not in(Y).
+#minimize { 1,X : in(X) }.
+#show in/1.
+```
+
+すべての辺の少なくとも一方の端点を含む頂点集合(頂点被覆)のうち、頂点数が最小のものを
+求めます。`_` は「何でもよい」を表す無名変数です。
+
+```sh
+./build/ddasp --gringo "$G" examples/vertex_cover.lp          # answer sets: 15  (すべての頂点被覆)
+./build/ddasp --gringo "$G" --opt --enumerate examples/vertex_cover.lp
+```
+
+```
+answer sets: 8
+optimum: 4
+in(6) in(5) in(3) in(2)
+in(6) in(4) in(3) in(2)
+...
+```
+
+最小サイズは 4 で、そのような被覆は 8 通りあります。「最適解が何通りあるか」を
+数えられるのも DDASP の特長です。
+
+### 8.4 ナップサック問題と `#sum`(`examples/knapsack.lp`)
+
+```prolog
+#const capacity = 10.
+item(a, 5, 10).   % item(Name, Weight, Value)
+item(b, 4,  7).
+item(c, 3,  5).
+item(d, 2,  3).
+item(e, 1,  1).
+{ in(I) : item(I,_,_) }.
+:- #sum { W,I : in(I), item(I,W,_) } > capacity.
+#minimize { -V,I : in(I), item(I,_,V) }.
+#show in/1.
+```
+
+`#sum { W,I : 条件 }` は条件を満たす `I` ごとの重み `W` の合計で、ここでは
+「選んだ品物の重さの合計が容量を超える」解を制約で除いています。価値の合計を
+**最大化**したいときは、負の重みを `#minimize` します。
+
+```sh
+./build/ddasp --gringo "$G" examples/knapsack.lp                   # answer sets: 25 (容量内の選び方)
+./build/ddasp --gringo "$G" --opt --enumerate examples/knapsack.lp
+```
+
+```
+answer sets: 2
+optimum: -18
+in(d) in(c) in(a)
+in(e) in(b) in(a)
+```
+
+価値 18 の選び方が 2 通りあります(`optimum` は最小化した値なので負になります)。
+
+---
+
+## 9. コマンドラインオプション一覧
 
 ```
 ddasp [options] FILE...
@@ -459,7 +590,7 @@ $G --output=intermediate examples/choice.lp > choice.aspif
 
 ---
 
-## 9. Python から使う
+## 10. Python から使う
 
 `ddasp` パッケージを使うと、グラウンディング(clingo)からコンパイルまでを Python の中で行えます。
 
@@ -497,7 +628,7 @@ res.count, res.optimum        # (1, [1])
 
 ---
 
-## 10. ZDD を KyotoDD で活用する
+## 11. ZDD を KyotoDD で活用する
 
 `res.zdd` は `kyotodd.ZDD` オブジェクトです。ここからが DDASP の本領で、
 解の族に対して KyotoDD の演算をそのまま使えます。
@@ -539,7 +670,7 @@ k 番目の解の取得(`unrank`)など、KyotoDD の ZDD 演算が一通り使�
 
 ---
 
-## 11. よくある質問とトラブルシューティング
+## 12. よくある質問とトラブルシューティング
 
 **Q. `answer sets: 0` と表示される。**
 プログラムに解がありません(clingo でいう UNSATISFIABLE)。制約が厳しすぎないか確認してください。

@@ -107,13 +107,16 @@ def test_optimization_matches_clingo(ddasp_bin, tmp_path, name):
     assert optimum == clingo_optimum([path])
 
 
-def test_minimize_example_matches_clingo(ddasp_bin):
-    example = EXAMPLES / "minimize.lp"
+OPT_EXAMPLES = sorted(p for p in EXAMPLES.glob("*.lp") if "#minimize" in p.read_text())
+
+
+@pytest.mark.parametrize("example", OPT_EXAMPLES, ids=lambda p: p.stem)
+def test_optimization_example_matches_clingo(ddasp_bin, example):
     assert set(ddasp_answer_sets(ddasp_bin, [example], "--opt")) == set(
         clingo_answer_sets([example], project=True, optimize=True))
     out, _ = run_ddasp(ddasp_bin, [example], "--opt")
-    assert "optimum: 1" in out
-    assert clingo_optimum([example]) == [1]
+    optimum = [int(x) for x in out.split("optimum:")[1].split()]
+    assert optimum == clingo_optimum([example])
 
 
 def test_exported_zdd_round_trips_through_kyotodd(ddasp_bin, tmp_path):
