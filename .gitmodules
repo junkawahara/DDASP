@@ -1,0 +1,3 @@
+[submodule "third_party/KyotoDD"]
+	path = third_party/KyotoDD
+	url = https://github.com/graphillion/kyotodd
