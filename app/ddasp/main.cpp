@@ -188,8 +188,13 @@ int main(int argc, char** argv) {
         if (opt.enumerate) {
             std::vector<std::vector<kyotodd::bddvar> > sets = res.zdd.enumerate();
             size_t limit = opt.enumerate_limit ? std::min(opt.enumerate_limit, sets.size()) : sets.size();
+            std::string fact_prefix;
+            for (size_t j = 0; j < res.fact_names.size(); ++j) {
+                if (!fact_prefix.empty()) fact_prefix += " ";
+                fact_prefix += res.fact_names[j];
+            }
             for (size_t i = 0; i < limit; ++i) {
-                std::string line;
+                std::string line = fact_prefix;
                 for (size_t j = 0; j < sets[i].size(); ++j) {
                     Atom a = res.var_to_atom[sets[i][j]];
                     if (!res.names.count(a)) continue;  // only #show'n atoms

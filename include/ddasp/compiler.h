@@ -50,6 +50,11 @@ struct CompileResult {
     std::vector<kyotodd::bddvar> atom_to_var;
     /** @brief Atom names taken from #show output statements whose condition is a single positive atom. */
     std::map<Atom, std::string> names;
+    /**
+     * @brief Names shown in every answer set: #show output statements with an empty
+     * condition (gringo emits facts this way, without naming their atom).
+     */
+    std::vector<std::string> fact_names;
 
     /** @brief Name of an atom: its #show name, or "__atom<id>" when it has none. */
     std::string atom_name(Atom a) const;

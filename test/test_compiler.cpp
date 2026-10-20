@@ -196,6 +196,23 @@ TEST(Compiler, NamesAndVariableMaps) {
     EXPECT_EQ(res.vars[0], res.atom_to_var[1]);
 }
 
+TEST(Compiler, FactNamesComeFromUnconditionalOutputs) {
+    // a. {c}. #show a/0. #show c/0.   (gringo names the fact without a condition)
+    Program p = read_aspif_string(
+        "asp 1 0 0\n"
+        "1 0 1 1 0 0\n"
+        "1 1 1 2 0 0\n"
+        "4 1 a 0\n"
+        "4 1 c 1 2\n"
+        "0\n");
+    CompileResult res = compile(p);
+    ASSERT_EQ(1u, res.fact_names.size());
+    EXPECT_EQ("a", res.fact_names[0]);
+    EXPECT_EQ(0u, res.names.count(1));
+    EXPECT_EQ("c", res.atom_name(2));
+    EXPECT_EQ(2u, res.zdd.card());
+}
+
 TEST(Compiler, CustomOrder) {
     Program p = read_aspif_string("asp 1 0 0\n1 1 3 1 2 3 0 0\n0\n");
     CompileOptions opts;

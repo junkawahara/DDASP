@@ -80,7 +80,7 @@ public:
         res.zdd = bdd_to_zdd_over(stable, x_vars_);
         res.var_to_atom = var_to_atom_;
         res.atom_to_var = atom_to_var_;
-        res.names = collect_names();
+        collect_names(res);
         return res;
     }
 
@@ -193,16 +193,16 @@ private:
         return f.exist(y_vars_);
     }
 
-    std::map<Atom, std::string> collect_names() const {
-        std::map<Atom, std::string> names;
+    void collect_names(CompileResult& res) const {
         for (size_t o = 0; o < prog_.outputs().size(); ++o) {
             const Output& out = prog_.outputs()[o];
-            if (out.condition.size() == 1 && is_positive(out.condition[0])) {
+            if (out.condition.empty()) {
+                res.fact_names.push_back(out.name);
+            } else if (out.condition.size() == 1 && is_positive(out.condition[0])) {
                 Atom a = out.condition[0];
-                if (!names.count(a)) names[a] = out.name;
+                if (!res.names.count(a)) res.names[a] = out.name;
             }
         }
-        return names;
     }
 
     const Program& prog_;
