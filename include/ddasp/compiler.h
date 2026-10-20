@@ -18,10 +18,21 @@
 
 namespace ddasp {
 
-/** @brief Algorithm used to enforce the stable model condition. */
+/**
+ * @brief Algorithm used to enforce the stable model condition.
+ *
+ * Both methods express "X has no non-empty unfounded set U" with auxiliary BDD
+ * variables u_a (a ∈ U) and existential quantification:
+ * Stable(X) = Models(X) ∧ ¬∃U (U ≠ ∅ ∧ U ⊆ X ∧ U is unfounded w.r.t. X).
+ */
 enum class Method {
-    TwoCopy  ///< Stable(X) = Models(X) ∧ ¬∃Y (Y ⊊ X ∧ Y ⊨ P^X), with two BDD variables per atom.
+    TwoCopy,  ///< One auxiliary variable per atom, a single quantification (reference implementation).
+    Scc       ///< Supportedness for every atom plus one quantification per non-trivial SCC of the
+              ///< positive dependency graph; auxiliary variables only for atoms in such SCCs.
 };
+
+/** @brief Parse a method name ("twocopy" or "scc"); throws std::invalid_argument otherwise. */
+Method parse_method(const std::string& name);
 
 /** @brief Compilation options. */
 struct CompileOptions {
@@ -41,7 +52,7 @@ struct CompileOptions {
      */
     std::vector<Atom> order;
 
-    CompileOptions() : method(Method::TwoCopy), project_to_shown(true), optimize(false) {}
+    CompileOptions() : method(Method::Scc), project_to_shown(true), optimize(false) {}
 };
 
 /**

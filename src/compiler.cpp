@@ -18,6 +18,12 @@ std::string CompileResult::atom_name(Atom a) const {
     return "__atom" + std::to_string(a);
 }
 
+Method parse_method(const std::string& name) {
+    if (name == "twocopy") return Method::TwoCopy;
+    if (name == "scc") return Method::Scc;
+    throw std::invalid_argument("unknown method '" + name + "' (expected twocopy or scc)");
+}
+
 namespace {
 
 /** Collect every atom mentioned in the program, in ascending id order. */
@@ -59,15 +65,112 @@ std::vector<Atom> resolve_order(const std::vector<Atom>& atoms, const std::vecto
 }
 
 /**
- * Two-copy compilation.
- *
- * x_a: "a ∈ X" (candidate answer set), y_a: "a ∈ Y" (candidate smaller model of the reduct).
+ * Non-trivial strongly connected components of the positive dependency graph
+ * (edge b -> h for every rule with b a positive body atom and h a head atom).
+ * A component is non-trivial if it has more than one atom or a self-loop.
+ * Returned as lists of atoms; the order of components is unspecified.
  */
-class TwoCopyCompiler {
+std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_atom) {
+    std::vector<std::vector<Atom> > succ(max_atom + 1);
+    std::vector<bool> self_loop(max_atom + 1, false);
+    for (size_t r = 0; r < prog.rules().size(); ++r) {
+        const Rule& rule = prog.rules()[r];
+        for (size_t i = 0; i < rule.body.lits.size(); ++i) {
+            Literal l = rule.body.lits[i].lit;
+            if (!is_positive(l)) continue;
+            for (size_t h = 0; h < rule.head.size(); ++h) {
+                succ[l].push_back(rule.head[h]);
+                if (rule.head[h] == l) self_loop[l] = true;
+            }
+        }
+    }
+
+    // Iterative Tarjan.
+    std::vector<int> index(max_atom + 1, -1), lowlink(max_atom + 1, 0);
+    std::vector<bool> on_stack(max_atom + 1, false);
+    std::vector<Atom> stack;
+    std::vector<std::vector<Atom> > sccs;
+    int next_index = 0;
+    struct Frame {
+        Atom v;
+        size_t next_child;
+    };
+    for (Atom root = 1; root <= max_atom; ++root) {
+        if (index[root] != -1) continue;
+        std::vector<Frame> call;
+        Frame f0 = {root, 0};
+        call.push_back(f0);
+        index[root] = lowlink[root] = next_index++;
+        stack.push_back(root);
+        on_stack[root] = true;
+        while (!call.empty()) {
+            Frame& fr = call.back();
+            Atom v = fr.v;
+            if (fr.next_child < succ[v].size()) {
+                Atom w = succ[v][fr.next_child++];
+                if (index[w] == -1) {
+                    index[w] = lowlink[w] = next_index++;
+                    stack.push_back(w);
+                    on_stack[w] = true;
+                    Frame fw = {w, 0};
+                    call.push_back(fw);
+                } else if (on_stack[w]) {
+                    lowlink[v] = std::min(lowlink[v], index[w]);
+                }
+                continue;
+            }
+            if (lowlink[v] == index[v]) {
+                std::vector<Atom> comp;
+                Atom w;
+                do {
+                    w = stack.back();
+                    stack.pop_back();
+                    on_stack[w] = false;
+                    comp.push_back(w);
+                } while (w != v);
+                if (comp.size() > 1 || self_loop[v]) sccs.push_back(comp);
+            }
+            call.pop_back();
+            if (!call.empty()) {
+                Atom parent = call.back().v;
+                lowlink[parent] = std::min(lowlink[parent], lowlink[v]);
+            }
+        }
+    }
+    return sccs;
+}
+
+/**
+ * Compiler shared by both methods.
+ *
+ * x_a: "a ∈ X" (candidate answer set).
+ * u_a: "a ∈ U" (candidate unfounded set), allocated only for atoms that belong
+ *      to some group. Y = X \ U is the candidate smaller model of the reduct P^X.
+ *
+ * For every group G (a set of atoms), the compiler removes the candidates X
+ * that have a non-empty unfounded set U ⊆ G:
+ *   Bad_G(X) = ∃U ⊆ G [ U ∩ X ≠ ∅ ∧ U ⊆ X ∧ ∀ rules r with head(r) ∩ G ≠ ∅: Unf_r(X, U) ]
+ * where Unf_r says that r does not support U: its body is false once the
+ * positive occurrences of atoms in U are made false, or no head atom is in U,
+ * or a head atom outside U is in X.
+ *
+ * TwoCopy uses the single group of all atoms. Scc uses the non-trivial SCCs of
+ * the positive dependency graph as groups plus an explicit supportedness
+ * constraint for every atom (the singleton unfounded sets).
+ */
+class Compiler {
 public:
-    TwoCopyCompiler(const Program& prog, const std::vector<Atom>& order, const CompileOptions& options)
+    Compiler(const Program& prog, const std::vector<Atom>& order, const CompileOptions& options)
         : prog_(prog), order_(order), options_(options) {
-        allocate_variables();
+        Atom max_atom = 0;
+        for (size_t i = 0; i < order_.size(); ++i) max_atom = std::max(max_atom, order_[i]);
+        if (options_.method == Method::TwoCopy) {
+            groups_.push_back(order_);
+        } else {
+            groups_ = nontrivial_sccs(prog_, max_atom);
+        }
+        allocate_variables(max_atom);
+        index_rules(max_atom);
     }
 
     CompileResult run() {
@@ -76,9 +179,11 @@ public:
         res.atom_to_var = atom_to_var_;
         collect_names(res);
 
-        BDD models = build_models();
-        BDD counter = build_counterexamples();
-        BDD stable = models & ~counter;
+        BDD stable = build_models();
+        if (options_.method == Method::Scc) stable &= build_supported();
+        for (size_t g = 0; g < groups_.size(); ++g) {
+            stable &= ~build_unfounded(groups_[g]);
+        }
         ZDD family = bdd_to_zdd_over(stable, x_vars_);
 
         res.costs = build_costs();
@@ -107,11 +212,13 @@ public:
     }
 
 private:
-    void allocate_variables() {
-        Atom max_atom = 0;
-        for (size_t i = 0; i < order_.size(); ++i) max_atom = std::max(max_atom, order_[i]);
+    void allocate_variables(Atom max_atom) {
         atom_to_var_.assign(max_atom + 1, 0);
-        atom_to_yvar_.assign(max_atom + 1, 0);
+        atom_to_uvar_.assign(max_atom + 1, 0);
+        in_group_.assign(max_atom + 1, false);
+        for (size_t g = 0; g < groups_.size(); ++g) {
+            for (size_t i = 0; i < groups_[g].size(); ++i) in_group_[groups_[g][i]] = true;
+        }
 
         // x variables: allocate bottom-up so that order_[0] ends up at the top level.
         std::vector<bddvar> xs(order_.size());
@@ -119,12 +226,12 @@ private:
             xs[i] = kyotodd::bddnewvar();
             atom_to_var_[order_[i]] = xs[i];
         }
-        // y variables: insert each one directly above its x variable.
+        // u variables: insert each one directly above its x variable.
         for (size_t i = 0; i < order_.size(); ++i) {
+            Atom a = order_[i];
+            if (!in_group_[a]) continue;
             bddvar lev = kyotodd::bddlevofvar(xs[i]);
-            bddvar y = kyotodd::bddnewvaroflev(lev + 1);
-            atom_to_yvar_[order_[i]] = y;
-            y_vars_.push_back(y);
+            atom_to_uvar_[a] = kyotodd::bddnewvaroflev(lev + 1);
         }
         x_vars_ = xs;
 
@@ -133,13 +240,32 @@ private:
         for (size_t i = 0; i < order_.size(); ++i) var_to_atom_[xs[i]] = order_[i];
     }
 
+    /** rules_of_head_[a] = indices of the rules having a in the head. */
+    void index_rules(Atom max_atom) {
+        rules_of_head_.assign(max_atom + 1, std::vector<size_t>());
+        for (size_t r = 0; r < prog_.rules().size(); ++r) {
+            const Rule& rule = prog_.rules()[r];
+            for (size_t h = 0; h < rule.head.size(); ++h) rules_of_head_[rule.head[h]].push_back(r);
+        }
+        is_external_.assign(max_atom + 1, false);
+        for (size_t e = 0; e < prog_.externals().size(); ++e) is_external_[prog_.externals()[e].atom] = true;
+    }
+
     BDD x_of(Atom a) const { return BDD::prime(atom_to_var_[a]); }
-    BDD y_of(Atom a) const { return BDD::prime(atom_to_yvar_[a]); }
+    BDD u_of(Atom a) const { return BDD::prime(atom_to_uvar_[a]); }
 
     /** Literal evaluated in X. */
     BDD lit_x(Literal l) const { return is_positive(l) ? x_of(atom_of(l)) : ~x_of(atom_of(l)); }
-    /** Literal of the reduct P^X evaluated in Y: positive atoms in Y, negated atoms in X. */
-    BDD lit_reduct(Literal l) const { return is_positive(l) ? y_of(atom_of(l)) : ~x_of(atom_of(l)); }
+
+    /**
+     * Literal evaluated in Y = X \ U, where U ranges over the atoms of the current
+     * group: positive atoms of the group become x_a ∧ ¬u_a, everything else is as in X.
+     */
+    BDD lit_reduct(Literal l, const std::set<Atom>& group) const {
+        Atom a = atom_of(l);
+        if (is_positive(l) && group.count(a)) return x_of(a) & ~u_of(a);
+        return lit_x(l);
+    }
 
     template <typename LitFn>
     BDD body_bdd(const Body& body, LitFn lit) const {
@@ -158,12 +284,13 @@ private:
     }
 
     struct LitX {
-        const TwoCopyCompiler* c;
+        const Compiler* c;
         BDD operator()(Literal l) const { return c->lit_x(l); }
     };
     struct LitReduct {
-        const TwoCopyCompiler* c;
-        BDD operator()(Literal l) const { return c->lit_reduct(l); }
+        const Compiler* c;
+        const std::set<Atom>* group;
+        BDD operator()(Literal l) const { return c->lit_reduct(l, *group); }
     };
 
     /** Models(X): X satisfies every rule classically (choice rules impose nothing). */
@@ -180,39 +307,88 @@ private:
         return models;
     }
 
-    /** ∃Y (Y ⊆ X ∧ Y ≠ X ∧ Y ⊨ P^X): X has a strictly smaller model of its reduct. */
-    BDD build_counterexamples() const {
-        LitReduct lr = {this};
-        BDD f = BDD::True;
+    /**
+     * Supported(X): every atom a ∈ X has a rule with a in the head whose body is
+     * true in X and whose other head atoms are false in X (external atoms are
+     * always supported). This is the unfounded-set condition for singleton sets.
+     */
+    BDD build_supported() const {
+        BDD supported = BDD::True;
+        LitX lx = {this};
         for (size_t i = 0; i < order_.size(); ++i) {
-            f &= ~y_of(order_[i]) | x_of(order_[i]);  // Y ⊆ X
+            Atom a = order_[i];
+            if (is_external_[a]) continue;
+            BDD support = BDD::False;
+            const std::vector<size_t>& rs = rules_of_head_[a];
+            for (size_t k = 0; k < rs.size(); ++k) {
+                const Rule& rule = prog_.rules()[rs[k]];
+                BDD s = body_bdd(rule.body, lx);
+                if (rule.head_type == HeadType::Disjunction) {
+                    for (size_t h = 0; h < rule.head.size(); ++h) {
+                        if (rule.head[h] != a) s &= ~x_of(rule.head[h]);
+                    }
+                }
+                support |= s;
+            }
+            supported &= ~x_of(a) | support;
         }
-        for (size_t r = 0; r < prog_.rules().size(); ++r) {
-            const Rule& rule = prog_.rules()[r];
-            BDD body = body_bdd(rule.body, lr);
+        return supported;
+    }
+
+    /** Bad_G(X) = ∃U ⊆ G (U ∩ X ≠ ∅ ∧ U ⊆ X ∧ U unfounded w.r.t. X). */
+    BDD build_unfounded(const std::vector<Atom>& group_atoms) const {
+        std::set<Atom> group(group_atoms.begin(), group_atoms.end());
+        LitReduct lr = {this, &group};
+
+        BDD f = BDD::True;
+        for (size_t i = 0; i < group_atoms.size(); ++i) {
+            f &= ~u_of(group_atoms[i]) | x_of(group_atoms[i]);  // U ⊆ X
+        }
+
+        std::set<size_t> rules;
+        for (size_t i = 0; i < group_atoms.size(); ++i) {
+            const std::vector<size_t>& rs = rules_of_head_[group_atoms[i]];
+            rules.insert(rs.begin(), rs.end());
+        }
+        for (std::set<size_t>::const_iterator it = rules.begin(); it != rules.end(); ++it) {
+            const Rule& rule = prog_.rules()[*it];
+            BDD body = body_bdd(rule.body, lr);  // body with the atoms of U removed
             if (rule.head_type == HeadType::Choice) {
-                // {H} :- B  contributes  a :- B+, not B-, not not a  for each a in H.
-                for (size_t i = 0; i < rule.head.size(); ++i) {
-                    Atom a = rule.head[i];
-                    f &= ~body | ~x_of(a) | y_of(a);
+                // {H} :- B  behaves as  a :- B, not not a  for each a in H.
+                for (size_t h = 0; h < rule.head.size(); ++h) {
+                    Atom a = rule.head[h];
+                    if (!group.count(a)) continue;
+                    f &= ~body | ~u_of(a);
                 }
             } else {
-                BDD head = BDD::False;
-                for (size_t i = 0; i < rule.head.size(); ++i) head |= y_of(rule.head[i]);
-                f &= ~body | head;
+                // r does not support U: body false, or head ∩ U = ∅, or (head \ U) ∩ X ≠ ∅.
+                BDD head_in_u = BDD::False;
+                BDD head_outside_u_in_x = BDD::False;
+                for (size_t h = 0; h < rule.head.size(); ++h) {
+                    Atom a = rule.head[h];
+                    if (group.count(a)) {
+                        head_in_u |= u_of(a);
+                        head_outside_u_in_x |= x_of(a) & ~u_of(a);
+                    } else {
+                        head_outside_u_in_x |= x_of(a);
+                    }
+                }
+                f &= ~body | ~head_in_u | head_outside_u_in_x;
             }
         }
-        // #external a is treated as the choice rule {a}.
-        for (size_t e = 0; e < prog_.externals().size(); ++e) {
-            Atom a = prog_.externals()[e].atom;
-            f &= ~x_of(a) | y_of(a);
+        // #external a is treated as the choice rule {a}: a can never be unfounded.
+        for (size_t i = 0; i < group_atoms.size(); ++i) {
+            if (is_external_[group_atoms[i]]) f &= ~u_of(group_atoms[i]);
         }
-        BDD neq = BDD::False;
-        for (size_t i = 0; i < order_.size(); ++i) {
-            neq |= x_of(order_[i]) & ~y_of(order_[i]);  // Y ≠ X
+
+        BDD nonempty = BDD::False;
+        std::vector<bddvar> uvars;
+        for (size_t i = 0; i < group_atoms.size(); ++i) {
+            nonempty |= u_of(group_atoms[i]);
+            uvars.push_back(atom_to_uvar_[group_atoms[i]]);
         }
-        f &= neq;
-        return f.exist(y_vars_);
+        f &= nonempty;
+        return f.exist(uvars);
     }
 
     void collect_names(CompileResult& res) const {
@@ -273,11 +449,14 @@ private:
     const Program& prog_;
     std::vector<Atom> order_;
     CompileOptions options_;
+    std::vector<std::vector<Atom> > groups_;
+    std::vector<bool> in_group_;
     std::vector<bddvar> x_vars_;
-    std::vector<bddvar> y_vars_;
     std::vector<bddvar> atom_to_var_;
-    std::vector<bddvar> atom_to_yvar_;
+    std::vector<bddvar> atom_to_uvar_;
     std::vector<Atom> var_to_atom_;
+    std::vector<std::vector<size_t> > rules_of_head_;
+    std::vector<bool> is_external_;
 };
 
 }  // namespace
@@ -285,13 +464,8 @@ private:
 CompileResult compile(const Program& program, const CompileOptions& options) {
     std::vector<Atom> atoms = collect_atoms(program);
     std::vector<Atom> order = resolve_order(atoms, options.order);
-    switch (options.method) {
-        case Method::TwoCopy: {
-            TwoCopyCompiler c(program, order, options);
-            return c.run();
-        }
-    }
-    throw std::invalid_argument("unknown compilation method");
+    Compiler c(program, order, options);
+    return c.run();
 }
 
 }  // namespace ddasp

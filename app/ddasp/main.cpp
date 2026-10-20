@@ -33,6 +33,7 @@ struct Options {
     bool export_bdd = false;
     bool all_atoms = false;
     bool optimize = false;
+    std::string method = "scc";
     size_t enumerate_limit = 0;  // 0 = unlimited
 };
 
@@ -53,6 +54,7 @@ void usage(std::ostream& os) {
           "  --all-atoms        do not project onto the shown atoms (every atom\n"
           "                     becomes a DD variable)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
+          "  --method M         stable-model method: scc (default) or twocopy\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
           "                     `CMD --output=intermediate FILE...`\n"
           "  --stats            print node counts and timings to stderr\n"
@@ -87,6 +89,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.all_atoms = true;
         } else if (a == "--opt") {
             opt.optimize = true;
+        } else if (a == "--method") {
+            opt.method = need_value("--method");
         } else if (a == "--atoms") {
             opt.atoms_file = need_value("--atoms");
         } else if (a == "--gringo") {
@@ -181,6 +185,7 @@ int main(int argc, char** argv) {
         CompileOptions copts;
         copts.project_to_shown = !opt.all_atoms;
         copts.optimize = opt.optimize;
+        copts.method = parse_method(opt.method);
         CompileResult res = compile(program, copts);
         double t_compile = seconds_since(t1);
 

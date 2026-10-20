@@ -39,9 +39,17 @@ CompileOptions no_projection() {
     return o;
 }
 
+/** Compile with both methods and check that they agree; return the family. */
 Family compile_family(const std::string& aspif, const CompileOptions& opts = no_projection()) {
     Program p = read_aspif_string(aspif);
-    return family_of(compile(p, opts));
+    CompileOptions two = opts;
+    two.method = Method::TwoCopy;
+    CompileOptions scc = opts;
+    scc.method = Method::Scc;
+    Family f_two = family_of(compile(p, two));
+    Family f_scc = family_of(compile(p, scc));
+    EXPECT_EQ(f_two, f_scc) << "methods disagree";
+    return f_scc;
 }
 
 std::set<Atom> S() { return std::set<Atom>(); }
@@ -322,4 +330,70 @@ TEST(DdUtil, ZddToBddOverRoundTrip) {
     // A variable absent from the family is forced to false in the BDD.
     ZDD single_a = ZDD::Single.change(a);
     EXPECT_EQ(BDD::prime(a) & ~BDD::prime(b) & ~BDD::prime(c), zdd_to_bdd_over(single_a, vars));
+}
+
+TEST(Compiler, ParseMethod) {
+    EXPECT_EQ(Method::TwoCopy, parse_method("twocopy"));
+    EXPECT_EQ(Method::Scc, parse_method("scc"));
+    EXPECT_THROW(parse_method("loop"), std::invalid_argument);
+    EXPECT_EQ(Method::Scc, CompileOptions().method);
+}
+
+TEST(Compiler, SccMethodAllocatesAuxVariablesOnlyInLoops) {
+    // {c}. a :- b. b :- a. a :- c. d :- a.   (loop {a,b}; c, d tight)
+    Program p = read_aspif_string(
+        "asp 1 0 0\n1 1 1 3 0 0\n1 0 1 1 0 1 2\n1 0 1 2 0 1 1\n1 0 1 1 0 1 3\n1 0 1 4 0 1 1\n0\n");
+    kyotodd::bddvar before = kyotodd::bddvarused();
+    CompileOptions scc = no_projection();
+    scc.method = Method::Scc;
+    CompileResult res = compile(p, scc);
+    EXPECT_EQ(before + 4 + 2, kyotodd::bddvarused());
+    std::set<Atom> all = S(1, 2, 3);
+    all.insert(4);
+    EXPECT_EQ(F(S(), all), family_of(res));
+
+    before = kyotodd::bddvarused();
+    CompileOptions two = no_projection();
+    two.method = Method::TwoCopy;
+    compile(p, two);
+    EXPECT_EQ(before + 4 + 4, kyotodd::bddvarused());
+}
+
+TEST(Compiler, SelfLoopIsANontrivialScc) {
+    // a :- a.  {b}. a :- b.
+    EXPECT_EQ(F(S(), S(1, 2)), compile_family("asp 1 0 0\n1 0 1 1 0 1 1\n1 1 1 2 0 0\n1 0 1 1 0 1 2\n0\n"));
+}
+
+TEST(Compiler, DisjunctiveLoopAcrossTwoRules) {
+    // a | b :- c.  c :- a.  c :- b.  {d}. c :- d.
+    // Loop {a,b,c}; with d: c true, then one of a/b (minimality) -> {a,c,d}, {b,c,d}.
+    const char* text =
+        "asp 1 0 0\n"
+        "1 0 2 1 2 0 1 3\n"
+        "1 0 1 3 0 1 1\n"
+        "1 0 1 3 0 1 2\n"
+        "1 1 1 4 0 0\n"
+        "1 0 1 3 0 1 4\n"
+        "0\n";
+    Family expected;
+    expected.insert(S());
+    std::set<Atom> s1 = S(1, 3);
+    s1.insert(4);
+    std::set<Atom> s2 = S(2, 3);
+    s2.insert(4);
+    expected.insert(s1);
+    expected.insert(s2);
+    EXPECT_EQ(expected, compile_family(text));
+}
+
+TEST(Compiler, WeightBodyInsideLoop) {
+    // {c}. a :- 1 <= #sum{1:b; 1:c}. b :- a.
+    // Loop {a,b}; without c the loop is unfounded.
+    const char* text =
+        "asp 1 0 0\n"
+        "1 1 1 3 0 0\n"
+        "1 0 1 1 1 1 2 2 1 3 1\n"
+        "1 0 1 2 0 1 1\n"
+        "0\n";
+    EXPECT_EQ(F(S(), S(1, 2, 3)), compile_family(text));
 }

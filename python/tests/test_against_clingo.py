@@ -41,21 +41,30 @@ def inline_program(request, tmp_path):
     return path
 
 
-def test_inline_program_matches_clingo(ddasp_bin, inline_program):
+METHODS = ["scc", "twocopy"]
+
+
+@pytest.mark.parametrize("method", METHODS)
+def test_inline_program_matches_clingo(ddasp_bin, inline_program, method):
     # Without projection every answer set is one line, so compare multisets.
-    assert ddasp_answer_sets(ddasp_bin, [inline_program], "--all-atoms") == clingo_answer_sets([inline_program])
+    got = ddasp_answer_sets(ddasp_bin, [inline_program], "--all-atoms", "--method", method)
+    assert got == clingo_answer_sets([inline_program])
 
 
-def test_inline_program_projection_matches_clingo(ddasp_bin, inline_program):
-    projected = ddasp_answer_sets(ddasp_bin, [inline_program])
+@pytest.mark.parametrize("method", METHODS)
+def test_inline_program_projection_matches_clingo(ddasp_bin, inline_program, method):
+    projected = ddasp_answer_sets(ddasp_bin, [inline_program], "--method", method)
     assert all(n == 1 for n in projected.values())
     assert set(projected) == set(clingo_answer_sets([inline_program], project=True))
 
 
+@pytest.mark.parametrize("method", METHODS)
 @pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.lp")), ids=lambda p: p.stem)
-def test_example_matches_clingo(ddasp_bin, example):
-    assert ddasp_answer_sets(ddasp_bin, [example], "--all-atoms") == clingo_answer_sets([example])
-    assert set(ddasp_answer_sets(ddasp_bin, [example])) == set(clingo_answer_sets([example], project=True))
+def test_example_matches_clingo(ddasp_bin, example, method):
+    got = ddasp_answer_sets(ddasp_bin, [example], "--all-atoms", "--method", method)
+    assert got == clingo_answer_sets([example])
+    projected = ddasp_answer_sets(ddasp_bin, [example], "--method", method)
+    assert set(projected) == set(clingo_answer_sets([example], project=True))
 
 
 OPT_PROGRAMS = {
