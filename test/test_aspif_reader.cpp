@@ -134,6 +134,17 @@ TEST(AspifReader, SkippedStatementsProduceWarnings) {
     EXPECT_NE(std::string::npos, warnings[3].find("theory"));
 }
 
+TEST(AspifReader, MissingTerminatorIsAWarning) {
+    std::vector<std::string> warnings;
+    Program p = read_aspif_string("asp 1 0 0\n1 0 1 1 0 0\n", &warnings);
+    EXPECT_EQ(1u, p.rules().size());
+    ASSERT_EQ(1u, warnings.size());
+    EXPECT_NE(std::string::npos, warnings[0].find("missing final 0"));
+    warnings.clear();
+    read_aspif_string("asp 1 0 0\n1 0 1 1 0 0\n0\n\n", &warnings);
+    EXPECT_TRUE(warnings.empty());
+}
+
 TEST(AspifReader, Errors) {
     EXPECT_THROW(read_aspif_string(""), AspifError);
     EXPECT_THROW(read_aspif_string("hello\n"), AspifError);
@@ -146,6 +157,8 @@ TEST(AspifReader, Errors) {
     EXPECT_THROW(read_aspif_string("asp 1 0 0\n4 5 abc 0\n0\n"), AspifError);      // short output string
     EXPECT_THROW(read_aspif_string("asp 1 0 0\n5 1 9\n0\n"), AspifError);          // bad external value
     EXPECT_THROW(read_aspif_string("asp 1 0 0\n42 1\n0\n"), AspifError);           // unknown statement
+    EXPECT_THROW(read_aspif_string("asp 1 0 0\n1 0 0 1 99999999999999999999 0\n0\n"), AspifError);  // bound overflow
+    EXPECT_THROW(read_aspif_string("asp 1 0 0\n1 0 1 99999999999 0 0\n0\n"), AspifError);  // atom beyond int32
     try {
         read_aspif_string("asp 1 0 0\n1 0 0 0\n0\n");
         FAIL() << "expected AspifError";

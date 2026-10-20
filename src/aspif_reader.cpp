@@ -1,5 +1,6 @@
 #include "ddasp/aspif_reader.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -27,7 +28,10 @@ public:
             throw AspifError(std::string("expected integer for ") + what, line_no_);
         }
         while (pos_ < line_.size() && isdigit(static_cast<unsigned char>(line_[pos_]))) ++pos_;
-        return std::strtoll(line_.substr(start, pos_ - start).c_str(), 0, 10);
+        errno = 0;
+        long long v = std::strtoll(line_.substr(start, pos_ - start).c_str(), 0, 10);
+        if (errno == ERANGE) throw AspifError(std::string("integer out of range for ") + what, line_no_);
+        return v;
     }
 
     int next_int32(const char* what) {
@@ -163,11 +167,13 @@ Program read_aspif(std::istream& in, std::vector<std::string>* warnings) {
     std::string line;
     int line_no = 0;
     bool header_seen = false;
+    bool ended = false;  // the last statement was the "0" terminator
 
     while (std::getline(in, line)) {
         ++line_no;
         LineTokens t(line, line_no);
         if (t.at_end()) continue;
+        ended = false;
 
         if (!header_seen) {
             // "asp 1 0 0 [incremental]"
@@ -186,6 +192,7 @@ Program read_aspif(std::istream& in, std::vector<std::string>* warnings) {
         switch (type) {
             case 0:
                 t.expect_end();
+                ended = true;
                 break;  // end of (one step of) the program; keep reading for incremental input
             case 1:
                 read_rule(t, line_no, prog);
@@ -221,6 +228,7 @@ Program read_aspif(std::istream& in, std::vector<std::string>* warnings) {
         }
     }
     if (!header_seen) throw AspifError("empty input (no aspif header)", line_no);
+    if (!ended) warn(warnings, line_no, "missing final 0 statement (truncated input?)");
     return prog;
 }
 

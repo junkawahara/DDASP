@@ -25,18 +25,29 @@ add_library(ddasp_lib STATIC
 )
 target_include_directories(ddasp_lib PUBLIC include)
 target_link_libraries(ddasp_lib PUBLIC kyotodd_lib)
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(ddasp_lib PRIVATE -Wall -Wextra)
-endif()
+
+# Warnings for every DDASP target (not for KyotoDD or GoogleTest).
+function(ddasp_warnings target)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+  endif()
+endfunction()
+ddasp_warnings(ddasp_lib)
+
+add_executable(ddasp app/ddasp/main.cpp)
+target_link_libraries(ddasp ddasp_lib)
+ddasp_warnings(ddasp)
 
 option(DDASP_BUILD_TESTS "Build tests (GoogleTest via FetchContent)" ON)
 
 if(DDASP_BUILD_TESTS)
   include(FetchContent)
-  # Reuse the checkout made by KyotoDD's build if present (avoids a download).
-  set(_kyotodd_gtest_src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/KyotoDD/build/_deps/googletest-src")
-  if(EXISTS "${_kyotodd_gtest_src}/CMakeLists.txt" AND NOT FETCHCONTENT_SOURCE_DIR_GOOGLETEST)
-    set(FETCHCONTENT_SOURCE_DIR_GOOGLETEST "${_kyotodd_gtest_src}" CACHE PATH "" FORCE)
+  # Reuse an existing GoogleTest checkout if one is given (avoids a download), e.g.
+  #   cmake -S . -B build -DDDASP_GTEST_SOURCE_DIR=path/to/googletest-src
+  set(DDASP_GTEST_SOURCE_DIR "" CACHE PATH "Existing GoogleTest source checkout to reuse")
+  if(DDASP_GTEST_SOURCE_DIR AND EXISTS "${DDASP_GTEST_SOURCE_DIR}/CMakeLists.txt"
+     AND NOT FETCHCONTENT_SOURCE_DIR_GOOGLETEST)
+    set(FETCHCONTENT_SOURCE_DIR_GOOGLETEST "${DDASP_GTEST_SOURCE_DIR}" CACHE PATH "" FORCE)
   endif()
   FetchContent_Declare(
     googletest
@@ -48,20 +59,10 @@ if(DDASP_BUILD_TESTS)
 
   enable_testing()
 
-  add_executable(program_test test/test_program.cpp)
-  target_link_libraries(program_test ddasp_lib GTest::gtest_main)
-  add_test(NAME program_test COMMAND program_test)
-
-  add_executable(aspif_reader_test test/test_aspif_reader.cpp)
-  target_link_libraries(aspif_reader_test ddasp_lib GTest::gtest_main)
-  add_test(NAME aspif_reader_test COMMAND aspif_reader_test)
+  foreach(name program aspif_reader compiler)
+    add_executable(${name}_test test/test_${name}.cpp)
+    target_link_libraries(${name}_test ddasp_lib GTest::gtest_main)
+    ddasp_warnings(${name}_test)
+    add_test(NAME ${name}_test COMMAND ${name}_test)
+  endforeach()
 endif()
-
-if(DDASP_BUILD_TESTS)
-  add_executable(compiler_test test/test_compiler.cpp)
-  target_link_libraries(compiler_test ddasp_lib GTest::gtest_main)
-  add_test(NAME compiler_test COMMAND compiler_test)
-endif()
-
-add_executable(ddasp app/ddasp/main.cpp)
-target_link_libraries(ddasp ddasp_lib)

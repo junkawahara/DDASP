@@ -216,7 +216,7 @@ TEST(Compiler, NamesAndVariableMaps) {
     EXPECT_EQ(1, res.var_to_atom[res.atom_to_var[1]]);
     EXPECT_EQ(2, res.var_to_atom[res.atom_to_var[2]]);
     EXPECT_EQ(4u, res.zdd.card());
-    // Default order: atom 1 at the top level.
+    // AtomId order: atom 1 at the top level.
     EXPECT_GT(kyotodd::bddlevofvar(res.atom_to_var[1]), kyotodd::bddlevofvar(res.atom_to_var[2]));
     EXPECT_EQ(res.vars[0], res.atom_to_var[1]);
 }
