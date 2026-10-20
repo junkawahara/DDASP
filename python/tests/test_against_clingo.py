@@ -5,7 +5,7 @@ from pathlib import Path
 import kyotodd
 import pytest
 
-from conftest import EXAMPLES, clingo_answer_sets, ddasp_answer_sets, run_ddasp
+from conftest import EXAMPLES, clingo_answer_sets, clingo_optimum, ddasp_answer_sets, run_ddasp
 
 INLINE_PROGRAMS = {
     "fact": "a. #show a/0.",
@@ -42,12 +42,60 @@ def inline_program(request, tmp_path):
 
 
 def test_inline_program_matches_clingo(ddasp_bin, inline_program):
-    assert ddasp_answer_sets(ddasp_bin, [inline_program]) == clingo_answer_sets([inline_program])
+    # Without projection every answer set is one line, so compare multisets.
+    assert ddasp_answer_sets(ddasp_bin, [inline_program], "--all-atoms") == clingo_answer_sets([inline_program])
+
+
+def test_inline_program_projection_matches_clingo(ddasp_bin, inline_program):
+    projected = ddasp_answer_sets(ddasp_bin, [inline_program])
+    assert all(n == 1 for n in projected.values())
+    assert set(projected) == set(clingo_answer_sets([inline_program], project=True))
 
 
 @pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.lp")), ids=lambda p: p.stem)
 def test_example_matches_clingo(ddasp_bin, example):
-    assert ddasp_answer_sets(ddasp_bin, [example]) == clingo_answer_sets([example])
+    assert ddasp_answer_sets(ddasp_bin, [example], "--all-atoms") == clingo_answer_sets([example])
+    assert set(ddasp_answer_sets(ddasp_bin, [example])) == set(clingo_answer_sets([example], project=True))
+
+
+OPT_PROGRAMS = {
+    "simple": "{ a; b; c }. :- not a, not b, not c. #minimize{ 1@1 : a; 2@1 : b; 5@0 : not c }. #show a/0. #show b/0. #show c/0.",
+    "vertex_cover": """
+        edge(1,2). edge(2,3). edge(3,4). edge(4,1). edge(1,3).
+        { in(X) : edge(X,_) ; in(Y) : edge(_,Y) }.
+        :- edge(X,Y), not in(X), not in(Y).
+        #minimize{ 1,X : in(X) }.
+        #show in/1.
+    """,
+    "weighted_hidden": """
+        { p(1..4) }.
+        w(X,X*X) :- p(X).
+        :- #count{ X : p(X) } < 2.
+        #minimize{ W,X : w(X,W) }.
+        #show p/1.
+    """,
+    "two_levels": """
+        { p(1..3) }. { q(1..3) }.
+        :- p(X), q(X).
+        :- #count{ X : p(X) } < 1.
+        #minimize{ 1@2,X : p(X) }.
+        #minimize{ -1@1,X : q(X) }.
+        #show p/1. #show q/1.
+    """,
+    "unsat": "a. :- a. #minimize{ 1 : a }.",
+}
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_optimization_matches_clingo(ddasp_bin, tmp_path, name):
+    path = tmp_path / f"{name}.lp"
+    path.write_text(OPT_PROGRAMS[name])
+    assert ddasp_answer_sets(ddasp_bin, [path], "--opt", "--all-atoms") == clingo_answer_sets([path], optimize=True)
+    assert set(ddasp_answer_sets(ddasp_bin, [path], "--opt")) == set(
+        clingo_answer_sets([path], project=True, optimize=True))
+    out, _ = run_ddasp(ddasp_bin, [path], "--opt")
+    optimum = [int(x) for x in out.split("optimum:")[1].split()] if "optimum:" in out else None
+    assert optimum == clingo_optimum([path])
 
 
 def test_exported_zdd_round_trips_through_kyotodd(ddasp_bin, tmp_path):

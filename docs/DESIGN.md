@@ -49,6 +49,32 @@ weight bodies uniformly, at the cost of doubling the number of BDD variables.
 Start from the Clark completion BDD, repeatedly extract a non-stable model, compute an
 unfounded set, conjoin its loop formula, until no non-stable model remains.
 
+## #show projection (default on)
+
+Atoms named by a `#show` output statement whose condition is a single positive
+atom are "shown". Output statements with an empty condition (how gringo emits
+facts) are names printed with every answer set. With projection, the hidden
+atoms are removed from the family with `ZDD::project`, so answer sets that
+differ only in hidden atoms collapse. `--all-atoms` keeps every atom as a DD
+variable. A `#show` with a compound condition is an error while projecting.
+
+## #minimize
+
+Each priority level becomes a linear cost over DD variables
+(`CostFunction`: offset + Σ weight·[atom ∈ X]; `not a` with weight w gives
+offset +w and weight −w on a). Costs are computed before projection. With
+`--opt`, levels are processed from the most important priority down, each time
+keeping the sets with `cost == min_weight` via `cost_bound_le`.
+
+## Conversions
+
+KyotoDD's `BDD::to_zdd` / `ZDD::to_bdd` work on levels, and the binary export
+format records levels too. Because the y variables are interleaved with the x
+variables, DDASP has its own `bdd_to_zdd_over` / `zdd_to_bdd_over`
+(`include/ddasp/dd_util.h`) that convert over an explicit variable set. The
+`--atoms` table therefore lists the level of each atom: after importing the
+binary file in a fresh process, variable numbers equal levels.
+
 ## Decisions log
 
 - 2026-10-20: language scope = everything gringo emits (normal/choice/constraint/

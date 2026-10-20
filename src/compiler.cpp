@@ -65,22 +65,44 @@ std::vector<Atom> resolve_order(const std::vector<Atom>& atoms, const std::vecto
  */
 class TwoCopyCompiler {
 public:
-    TwoCopyCompiler(const Program& prog, const std::vector<Atom>& order) : prog_(prog), order_(order) {
+    TwoCopyCompiler(const Program& prog, const std::vector<Atom>& order, const CompileOptions& options)
+        : prog_(prog), order_(order), options_(options) {
         allocate_variables();
     }
 
     CompileResult run() {
-        BDD models = build_models();
-        BDD counter = build_counterexamples();
-        BDD stable = models & ~counter;
-
         CompileResult res;
-        res.bdd = stable;
-        res.vars = x_vars_;
-        res.zdd = bdd_to_zdd_over(stable, x_vars_);
         res.var_to_atom = var_to_atom_;
         res.atom_to_var = atom_to_var_;
         collect_names(res);
+
+        BDD models = build_models();
+        BDD counter = build_counterexamples();
+        BDD stable = models & ~counter;
+        ZDD family = bdd_to_zdd_over(stable, x_vars_);
+
+        res.costs = build_costs();
+        if (options_.optimize && !family.is_zero()) {
+            for (size_t c = 0; c < res.costs.size(); ++c) {
+                std::vector<int> w = int_weights(res.costs[c].var_weights);
+                long long best = family.min_weight(w);
+                family = family.cost_bound_le(w, best);
+                res.optimum.push_back(best + res.costs[c].offset);
+            }
+        }
+
+        res.vars = x_vars_;
+        if (options_.project_to_shown) {
+            std::vector<bddvar> hidden, shown;
+            for (size_t i = 0; i < order_.size(); ++i) {
+                Atom a = order_[i];
+                (res.names.count(a) ? shown : hidden).push_back(atom_to_var_[a]);
+            }
+            if (!hidden.empty()) family = family.project(hidden);
+            res.vars = shown;
+        }
+        res.zdd = family;
+        res.bdd = zdd_to_bdd_over(family, res.vars);
         return res;
     }
 
@@ -201,12 +223,56 @@ private:
             } else if (out.condition.size() == 1 && is_positive(out.condition[0])) {
                 Atom a = out.condition[0];
                 if (!res.names.count(a)) res.names[a] = out.name;
+            } else if (options_.project_to_shown) {
+                throw std::invalid_argument(
+                    "#show statement for '" + out.name +
+                    "' has a condition that is not a single positive atom; "
+                    "projection onto shown atoms is not possible (disable projection)");
             }
         }
     }
 
+    /** Linear cost functions of the #minimize statements, most important priority first. */
+    std::vector<CostFunction> build_costs() const {
+        std::map<int, CostFunction> by_priority;
+        for (size_t m = 0; m < prog_.minimizes().size(); ++m) {
+            const Minimize& min = prog_.minimizes()[m];
+            CostFunction& cf = by_priority[min.priority];
+            cf.priority = min.priority;
+            if (cf.var_weights.empty()) cf.var_weights.assign(kyotodd::bddvarused() + 1, 0);
+            for (size_t i = 0; i < min.lits.size(); ++i) {
+                Literal l = min.lits[i].lit;
+                long long w = min.lits[i].weight;
+                bddvar v = atom_to_var_[atom_of(l)];
+                if (is_positive(l)) {
+                    cf.var_weights[v] += w;
+                } else {
+                    cf.offset += w;
+                    cf.var_weights[v] -= w;
+                }
+            }
+        }
+        std::vector<CostFunction> costs;
+        for (std::map<int, CostFunction>::reverse_iterator it = by_priority.rbegin(); it != by_priority.rend(); ++it) {
+            costs.push_back(it->second);
+        }
+        return costs;
+    }
+
+    static std::vector<int> int_weights(const std::vector<long long>& w) {
+        std::vector<int> r(w.size());
+        for (size_t i = 0; i < w.size(); ++i) {
+            if (w[i] > 0x7fffffffLL || w[i] < -0x7fffffffLL) {
+                throw std::invalid_argument("#minimize weight out of 32-bit range");
+            }
+            r[i] = static_cast<int>(w[i]);
+        }
+        return r;
+    }
+
     const Program& prog_;
     std::vector<Atom> order_;
+    CompileOptions options_;
     std::vector<bddvar> x_vars_;
     std::vector<bddvar> y_vars_;
     std::vector<bddvar> atom_to_var_;
@@ -221,7 +287,7 @@ CompileResult compile(const Program& program, const CompileOptions& options) {
     std::vector<Atom> order = resolve_order(atoms, options.order);
     switch (options.method) {
         case Method::TwoCopy: {
-            TwoCopyCompiler c(program, order);
+            TwoCopyCompiler c(program, order, options);
             return c.run();
         }
     }

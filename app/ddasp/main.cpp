@@ -31,6 +31,8 @@ struct Options {
     bool stats = false;
     bool quiet = false;
     bool export_bdd = false;
+    bool all_atoms = false;
+    bool optimize = false;
     size_t enumerate_limit = 0;  // 0 = unlimited
 };
 
@@ -48,6 +50,9 @@ void usage(std::ostream& os) {
           "  -o FILE            write the ZDD to FILE (KyotoDD binary format)\n"
           "  --bdd              write a BDD instead of a ZDD with -o\n"
           "  --atoms FILE       write the variable/level/atom/name table to FILE\n"
+          "  --all-atoms        do not project onto the shown atoms (every atom\n"
+          "                     becomes a DD variable)\n"
+          "  --opt              keep only the optimal answer sets (#minimize)\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
           "                     `CMD --output=intermediate FILE...`\n"
           "  --stats            print node counts and timings to stderr\n"
@@ -78,6 +83,10 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.output = need_value("-o");
         } else if (a == "--bdd") {
             opt.export_bdd = true;
+        } else if (a == "--all-atoms") {
+            opt.all_atoms = true;
+        } else if (a == "--opt") {
+            opt.optimize = true;
         } else if (a == "--atoms") {
             opt.atoms_file = need_value("--atoms");
         } else if (a == "--gringo") {
@@ -169,7 +178,10 @@ int main(int argc, char** argv) {
         }
 
         Clock::time_point t1 = Clock::now();
-        CompileResult res = compile(program);
+        CompileOptions copts;
+        copts.project_to_shown = !opt.all_atoms;
+        copts.optimize = opt.optimize;
+        CompileResult res = compile(program, copts);
         double t_compile = seconds_since(t1);
 
         if (opt.stats) {
@@ -184,6 +196,11 @@ int main(int argc, char** argv) {
         bigint::BigInt count = res.zdd.exact_count();
         if (!opt.quiet) std::cout << "answer sets: " << count.to_string() << "\n";
         else if (opt.count) std::cout << count.to_string() << "\n";
+        if (opt.optimize && !opt.quiet && !res.optimum.empty()) {
+            std::cout << "optimum:";
+            for (size_t i = 0; i < res.optimum.size(); ++i) std::cout << ' ' << res.optimum[i];
+            std::cout << "\n";
+        }
 
         if (opt.enumerate) {
             std::vector<std::vector<kyotodd::bddvar> > sets = res.zdd.enumerate();
@@ -220,6 +237,14 @@ int main(int argc, char** argv) {
                 kyotodd::bddvar v = res.vars[i];
                 Atom a = res.var_to_atom[v];
                 out << v << ' ' << kyotodd::bddlevofvar(v) << ' ' << a << ' ' << res.atom_name(a) << "\n";
+            }
+            for (size_t c = 0; c < res.costs.size(); ++c) {
+                out << "# minimize priority " << res.costs[c].priority << " offset " << res.costs[c].offset;
+                for (size_t i = 0; i < res.vars.size(); ++i) {
+                    kyotodd::bddvar v = res.vars[i];
+                    if (res.costs[c].var_weights[v] != 0) out << ' ' << v << ':' << res.costs[c].var_weights[v];
+                }
+                out << "\n";
             }
         }
         return 0;

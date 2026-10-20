@@ -30,6 +30,16 @@ namespace ddasp {
 kyotodd::ZDD bdd_to_zdd_over(const kyotodd::BDD& f, const std::vector<kyotodd::bddvar>& vars);
 
 /**
+ * @brief Convert a ZDD to a BDD over an explicit variable set (inverse of bdd_to_zdd_over).
+ *
+ * The result is the characteristic function of the family: it is true for an
+ * assignment iff the set of true variables (among @p vars) is in the family.
+ * Variables in @p vars that never occur in the family are forced to false.
+ * Variables of the ZDD outside @p vars cause std::invalid_argument.
+ */
+kyotodd::BDD zdd_to_bdd_over(const kyotodd::ZDD& f, const std::vector<kyotodd::bddvar>& vars);
+
+/**
  * @brief Threshold constraint: sum(weights[i] * [terms[i]]) >= bound.
  *
  * @param terms   BDDs of the (pseudo-)literals.

@@ -33,9 +33,9 @@ def run_ddasp(ddasp_bin, files, *extra):
     return proc.stdout, proc.stderr
 
 
-def ddasp_answer_sets(ddasp_bin, files):
+def ddasp_answer_sets(ddasp_bin, files, *extra):
     """Multiset of answer sets (frozensets of shown atom names) from ddasp --enumerate."""
-    out, _ = run_ddasp(ddasp_bin, files, "--enumerate", "-q")
+    out, _ = run_ddasp(ddasp_bin, files, "--enumerate", "-q", *extra)
     return Counter(frozenset(line.split()) for line in out.splitlines())
 
 
@@ -43,13 +43,20 @@ def _external_atoms(ctl):
     return [a.symbol for a in ctl.symbolic_atoms if a.is_external]
 
 
-def clingo_answer_sets(files):
+def clingo_answer_sets(files, project=False, optimize=False):
     """Multiset of answer sets (frozensets of shown atom names) enumerated by clingo.
 
     #external atoms are free in ddasp, so every truth assignment of the
-    externals is enumerated and the results are merged.
+    externals is enumerated and the results are merged. With ``project`` the
+    answer sets are projected onto the shown atoms (distinct projections);
+    with ``optimize`` only optimal answer sets are kept.
     """
-    ctl = clingo.Control(["0"])
+    args = ["0"]
+    if project:
+        args.append("--project=show")
+    if optimize:
+        args.append("--opt-mode=optN")
+    ctl = clingo.Control(args)
     for f in files:
         ctl.load(str(f))
     ctl.ground([("base", [])])
@@ -60,5 +67,21 @@ def clingo_answer_sets(files):
             ctl.assign_external(sym, bool(mask >> i & 1))
         with ctl.solve(yield_=True) as handle:
             for model in handle:
+                if optimize and not model.optimality_proven:
+                    continue
                 result[frozenset(str(s) for s in model.symbols(shown=True))] += 1
     return result
+
+
+def clingo_optimum(files):
+    """Optimal cost vector reported by clingo (None if the program is inconsistent)."""
+    ctl = clingo.Control(["0", "--opt-mode=optN"])
+    for f in files:
+        ctl.load(str(f))
+    ctl.ground([("base", [])])
+    best = None
+    with ctl.solve(yield_=True) as handle:
+        for model in handle:
+            if model.optimality_proven:
+                best = list(model.cost)
+    return best

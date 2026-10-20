@@ -62,6 +62,49 @@ ZDD bdd_to_zdd_over(const BDD& f, const std::vector<bddvar>& vars) {
 
 namespace {
 
+typedef std::unordered_map<bddp, std::unordered_map<size_t, BDD> > ConvBackMemo;
+
+BDD zdd_to_bdd_rec(const ZDD& f, const std::vector<bddvar>& vars, size_t i, ConvBackMemo& memo) {
+    if (i == vars.size()) {
+        if (!f.is_terminal()) {
+            throw std::invalid_argument("zdd_to_bdd_over: ZDD depends on variable " +
+                                        std::to_string(f.top()) + " which is not in the variable set");
+        }
+        return f.is_one() ? BDD::True : BDD::False;
+    }
+    std::unordered_map<size_t, BDD>& m = memo[f.id()];
+    std::unordered_map<size_t, BDD>::iterator it = m.find(i);
+    if (it != m.end()) return it->second;
+
+    bddvar v = vars[i];
+    BDD lo, hi;
+    if (!f.is_terminal() && f.top() == v) {
+        lo = zdd_to_bdd_rec(f.child0(), vars, i + 1, memo);
+        hi = zdd_to_bdd_rec(f.child1(), vars, i + 1, memo);
+    } else {
+        if (!f.is_terminal() && kyotodd::bddlevofvar(f.top()) > kyotodd::bddlevofvar(v)) {
+            throw std::invalid_argument("zdd_to_bdd_over: ZDD depends on variable " +
+                                        std::to_string(f.top()) + " which is not in the variable set");
+        }
+        lo = zdd_to_bdd_rec(f, vars, i + 1, memo);
+        hi = BDD::False;  // zero-suppressed: v absent from every set below
+    }
+    BDD r = BDD::ite(BDD::prime(v), hi, lo);
+    m[i] = r;
+    return r;
+}
+
+}  // namespace
+
+BDD zdd_to_bdd_over(const ZDD& f, const std::vector<bddvar>& vars) {
+    std::vector<bddvar> sorted(vars);
+    std::sort(sorted.begin(), sorted.end(), LevelDesc());
+    ConvBackMemo memo;
+    return zdd_to_bdd_rec(f, sorted, 0, memo);
+}
+
+namespace {
+
 struct ThresholdBuilder {
     const std::vector<BDD>& terms;
     const std::vector<long long>& weights;
