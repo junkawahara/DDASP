@@ -55,6 +55,7 @@ struct Result {
     std::map<int, int> atom_to_level;        // every atom of the program
     std::map<int, std::string> names;
     std::vector<std::string> fact_names;
+    std::vector<std::pair<std::string, std::vector<int> > > terms;  // (name, condition literals)
     std::vector<py::dict> costs;
     std::vector<long long> optimum;
     std::string count;
@@ -91,6 +92,9 @@ Result compile_py(const Program& program, const std::string& method, const std::
         }
         out.names = res.names;
         out.fact_names = res.fact_names;
+        for (size_t t = 0; t < res.terms.size(); ++t) {
+            out.terms.push_back(std::make_pair(res.terms[t].name, res.terms[t].condition));
+        }
         for (size_t c = 0; c < res.costs.size(); ++c) {
             py::dict d;
             d["priority"] = res.costs[c].priority;
@@ -187,6 +191,7 @@ PYBIND11_MODULE(_core, m) {
         .def_readonly("atom_to_level", &Result::atom_to_level)
         .def_readonly("names", &Result::names)
         .def_readonly("fact_names", &Result::fact_names)
+        .def_readonly("terms", &Result::terms)
         .def_readonly("costs", &Result::costs)
         .def_readonly("optimum", &Result::optimum)
         .def_readonly("count", &Result::count)

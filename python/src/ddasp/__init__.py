@@ -12,7 +12,7 @@ Grounding is done by clingo; the ground program is collected through a
 ``clingo`` observer into a :class:`Program` and compiled by the C++ core.
 """
 
-from typing import Iterable, Iterator, List, Optional, Sequence, Union
+from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 import clingo
 from clingo.backend import Observer as _ClingoObserver
@@ -117,6 +117,17 @@ class Result:
         return list(self._core.fact_names)
 
     @property
+    def terms(self) -> List[Tuple[str, List[int]]]:
+        """The other #show outputs as ``(name, condition)`` pairs.
+
+        ``condition`` is a list of signed atom ids; the name is shown when every
+        literal holds. This covers further names of an atom (``#show t : a.``
+        when ``a`` is already shown) and negated conditions (``#show t : not a.``).
+        The atoms of these conditions count as shown atoms.
+        """
+        return [(name, list(cond)) for name, cond in self._core.terms]
+
+    @property
     def costs(self) -> list:
         """One dict per #minimize priority (most important first): priority, offset, weights {level: w}."""
         return list(self._core.costs)
@@ -167,19 +178,26 @@ class Result:
         return [kyotodd.to_var(lev) for lev in self._core.levels]
 
     def answer_sets(self) -> Iterator[frozenset]:
-        """Iterate over the answer sets as frozensets of shown atom names (via kyotodd).
+        """Iterate over the answer sets as frozensets of shown names (via kyotodd).
 
-        Unnamed (hidden) atoms are left out, so without projection the same
-        frozenset can be yielded several times.
+        Each set holds the fact names, the names of its atoms and the terms
+        whose conditions hold, like clingo's output. Unnamed (hidden) atoms are
+        left out, so without projection the same frozenset can be yielded
+        several times.
         """
         import kyotodd
 
         facts = frozenset(self._core.fact_names)
         names = self._core.names
+        terms = self._core.terms
         level_to_atom = self._core.level_to_atom
         for s in self.zdd.enumerate():
-            atoms = (level_to_atom[kyotodd.to_level(v)] for v in s)
-            yield facts | frozenset(names[a] for a in atoms if a in names)
+            atoms = frozenset(level_to_atom[kyotodd.to_level(v)] for v in s)
+            shown = set(names[a] for a in atoms if a in names)
+            for name, cond in terms:
+                if all((abs(l) in atoms) == (l > 0) for l in cond):
+                    shown.add(name)
+            yield facts | frozenset(shown)
 
 
 def compile(

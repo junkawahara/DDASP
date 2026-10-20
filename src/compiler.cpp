@@ -20,6 +20,43 @@ std::string CompileResult::atom_name(Atom a) const {
     return "__atom" + std::to_string(a);
 }
 
+std::vector<std::string> CompileResult::shown_names(const std::vector<Atom>& atoms) const {
+    std::vector<std::string> out(fact_names);
+    for (size_t i = 0; i < atoms.size(); ++i) {
+        std::map<Atom, std::string>::const_iterator it = names.find(atoms[i]);
+        if (it != names.end()) out.push_back(it->second);
+    }
+    if (!terms.empty()) {
+        std::set<Atom> in(atoms.begin(), atoms.end());
+        for (size_t t = 0; t < terms.size(); ++t) {
+            const std::vector<Literal>& cond = terms[t].condition;
+            bool holds = true;
+            for (size_t i = 0; i < cond.size() && holds; ++i) {
+                holds = (in.count(atom_of(cond[i])) != 0) == is_positive(cond[i]);
+            }
+            if (holds) out.push_back(terms[t].name);
+        }
+    }
+    // A name shown through several outputs is displayed once (clingo prints a set of symbols).
+    std::set<std::string> seen;
+    std::vector<std::string> unique;
+    for (size_t i = 0; i < out.size(); ++i) {
+        if (seen.insert(out[i]).second) unique.push_back(out[i]);
+    }
+    return unique;
+}
+
+std::map<Atom, std::string> atom_names(const Program& prog) {
+    std::map<Atom, std::string> names;
+    for (size_t o = 0; o < prog.outputs().size(); ++o) {
+        const Output& out = prog.outputs()[o];
+        if (out.condition.size() == 1 && is_positive(out.condition[0])) {
+            names.insert(std::make_pair(out.condition[0], out.name));  // first one wins
+        }
+    }
+    return names;
+}
+
 OrderHeuristic parse_order_heuristic(const std::string& name) {
     if (name == "id") return OrderHeuristic::AtomId;
     if (name == "name") return OrderHeuristic::NaturalName;
@@ -84,22 +121,27 @@ std::vector<Atom> collect_atoms(const Program& prog) {
     return std::vector<Atom>(atoms.begin(), atoms.end());
 }
 
-/** Atom names from the #show output statements (fills names and fact_names of the result). */
-void collect_names(const Program& prog, bool projecting, CompileResult& res) {
+/**
+ * Split the #show outputs into fact names, primary atom names and terms, and
+ * return the set of shown atoms (named atoms plus the atoms of term conditions).
+ */
+std::set<Atom> collect_names(const Program& prog, CompileResult& res) {
+    res.names = atom_names(prog);
+    std::set<Atom> shown;
     for (size_t o = 0; o < prog.outputs().size(); ++o) {
         const Output& out = prog.outputs()[o];
         if (out.condition.empty()) {
             res.fact_names.push_back(out.name);
-        } else if (out.condition.size() == 1 && is_positive(out.condition[0])) {
-            Atom a = out.condition[0];
-            if (!res.names.count(a)) res.names[a] = out.name;
-        } else if (projecting) {
-            throw std::invalid_argument(
-                "#show statement for '" + out.name +
-                "' has a condition that is not a single positive atom; "
-                "projection onto shown atoms is not possible (disable projection)");
+            continue;
         }
+        for (size_t i = 0; i < out.condition.size(); ++i) shown.insert(atom_of(out.condition[i]));
+        if (out.condition.size() == 1 && is_positive(out.condition[0]) &&
+            res.names[out.condition[0]] == out.name) {
+            continue;  // the atom's primary name (a repeated identical output is dropped)
+        }
+        res.terms.push_back(ShowTerm(out.name, out.condition));
     }
+    return shown;
 }
 
 struct NameLess {
@@ -309,8 +351,9 @@ std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_at
  */
 class Compiler {
 public:
-    Compiler(const Program& prog, const std::vector<Atom>& order, const CompileOptions& options)
-        : prog_(prog), order_(order), options_(options) {
+    Compiler(const Program& prog, const std::vector<Atom>& order, const std::set<Atom>& shown,
+             const CompileOptions& options)
+        : prog_(prog), order_(order), shown_(shown), options_(options) {
         Atom max_atom = 0;
         for (size_t i = 0; i < order_.size(); ++i) max_atom = std::max(max_atom, order_[i]);
         if (options_.method == Method::TwoCopy) {
@@ -368,7 +411,7 @@ public:
             std::vector<bddvar> hidden, shown;
             for (size_t i = 0; i < order_.size(); ++i) {
                 Atom a = order_[i];
-                (res.names.count(a) ? shown : hidden).push_back(atom_to_var_[a]);
+                (shown_.count(a) ? shown : hidden).push_back(atom_to_var_[a]);
             }
             if (!hidden.empty()) family = family.project(hidden);
             res.vars = shown;
@@ -612,6 +655,7 @@ private:
 
     const Program& prog_;
     std::vector<Atom> order_;
+    std::set<Atom> shown_;
     CompileOptions options_;
     std::vector<std::vector<Atom> > groups_;
     std::vector<bool> in_group_;
@@ -628,11 +672,11 @@ private:
 CompileResult compile(const Program& program, const CompileOptions& options) {
     CompileResult res;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    collect_names(program, options.project_to_shown, res);
+    std::set<Atom> shown = collect_names(program, res);
     std::vector<Atom> atoms = collect_atoms(program);
     std::vector<Atom> order = resolve_order(program, atoms, options, res.names);
     res.stats.order_time = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    Compiler c(program, order, options);
+    Compiler c(program, order, shown, options);
     return c.run(res);
 }
 

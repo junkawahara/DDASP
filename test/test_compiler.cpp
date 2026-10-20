@@ -272,11 +272,55 @@ TEST(Compiler, ProjectionOntoShownAtoms) {
     EXPECT_TRUE(res.bdd.is_one());
 }
 
-TEST(Compiler, ProjectionRejectsCompoundShowCondition) {
-    // #show t : a, b.   -> output with a two-literal condition
+std::vector<std::string> shown_of(const CompileResult& res, const std::set<Atom>& atoms) {
+    return res.shown_names(std::vector<Atom>(atoms.begin(), atoms.end()));
+}
+
+TEST(Compiler, CompoundShowConditionKeepsItsAtomsShown) {
+    // {a;b}. #show t : a, b.   (an output with a two-literal condition; a and b are kept)
     Program p = read_aspif_string("asp 1 0 0\n1 1 2 1 2 0 0\n4 1 t 2 1 2\n0\n");
-    EXPECT_THROW(compile(p), std::invalid_argument);
-    EXPECT_EQ(4u, family_of(compile(p, no_projection())).size());
+    CompileResult res = compile(p);
+    EXPECT_EQ(2u, res.vars.size());
+    EXPECT_EQ(4u, res.zdd.card());
+    ASSERT_EQ(1u, res.terms.size());
+    EXPECT_EQ("t", res.terms[0].name);
+    EXPECT_TRUE(res.names.empty());
+    EXPECT_EQ(std::vector<std::string>(), shown_of(res, S(1)));
+    EXPECT_EQ(std::vector<std::string>(1, "t"), shown_of(res, S(1, 2)));
+}
+
+TEST(Compiler, SecondNameOfAnAtomIsATerm) {
+    // {a}. #show a/0. #show t : a.   -> clingo prints "a t"
+    Program p = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n4 1 a 1 1\n4 1 t 1 1\n0\n");
+    CompileResult res = compile(p);
+    EXPECT_EQ("a", res.atom_name(1));
+    ASSERT_EQ(1u, res.terms.size());
+    EXPECT_EQ("t", res.terms[0].name);
+    std::vector<std::string> expected;
+    expected.push_back("a");
+    expected.push_back("t");
+    EXPECT_EQ(expected, shown_of(res, S(1)));
+    EXPECT_EQ(std::vector<std::string>(), shown_of(res, S()));
+    EXPECT_EQ(res.names, atom_names(p));
+}
+
+TEST(Compiler, NegatedShowConditionIsEvaluatedOnTheProjectedSets) {
+    // {a}. #show t : not a.   -> clingo prints "t" and "" ; a stays a DD variable
+    Program p = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n4 1 t 1 -1\n0\n");
+    CompileResult res = compile(p);
+    ASSERT_EQ(1u, res.vars.size());
+    EXPECT_EQ("__atom1", res.atom_name(1));
+    EXPECT_EQ(std::vector<std::string>(1, "t"), shown_of(res, S()));
+    EXPECT_EQ(std::vector<std::string>(), shown_of(res, S(1)));
+}
+
+TEST(Compiler, SameNameThroughSeveralOutputsIsShownOnce) {
+    // {a;b}. #show t : a. #show t : b.
+    Program p = read_aspif_string("asp 1 0 0\n1 1 2 1 2 0 0\n4 1 t 1 1\n4 1 t 1 2\n0\n");
+    CompileResult res = compile(p);
+    EXPECT_EQ(2u, res.vars.size());
+    EXPECT_EQ(std::vector<std::string>(1, "t"), shown_of(res, S(1, 2)));
+    EXPECT_EQ(std::vector<std::string>(1, "t"), shown_of(res, S(2)));
 }
 
 TEST(Compiler, ProjectionToNothingGivesSingleEmptySet) {

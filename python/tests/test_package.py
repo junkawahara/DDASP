@@ -9,25 +9,22 @@ from conftest import EXAMPLES, clingo_answer_sets, clingo_optimum  # noqa: E402
 from test_against_clingo import INLINE_PROGRAMS, OPT_PROGRAMS  # noqa: E402
 
 
+def _write(tmp_path, name, programs=INLINE_PROGRAMS):
+    path = tmp_path / f"{name}.lp"
+    path.write_text(programs[name])
+    return path
+
+
 @pytest.mark.parametrize("name", sorted(INLINE_PROGRAMS))
 @pytest.mark.parametrize("method", ["scc", "twocopy"])
-def test_compile_text_matches_clingo(name, method):
+def test_compile_text_matches_clingo(tmp_path, name, method):
+    path = _write(tmp_path, name)
     res = ddasp.compile_text(INLINE_PROGRAMS[name], method=method, project=False)
-    assert res.count == sum(clingo_answer_sets([_write(name)]).values())
-    assert set(res.answer_sets()) == set(clingo_answer_sets([_write(name)], project=True))
+    assert res.count == sum(clingo_answer_sets([path]).values())
+    assert set(res.answer_sets()) == set(clingo_answer_sets([path], project=True))
     projected = ddasp.compile_text(INLINE_PROGRAMS[name], method=method)
-    assert set(projected.answer_sets()) == set(clingo_answer_sets([_write(name)], project=True))
+    assert set(projected.answer_sets()) == set(clingo_answer_sets([path], project=True))
     assert projected.zdd.exact_count == projected.count
-
-
-def _write(name, programs=INLINE_PROGRAMS):
-    import tempfile
-    import os
-
-    path = os.path.join(tempfile.gettempdir(), f"ddasp_pkg_{name}.lp")
-    with open(path, "w") as f:
-        f.write(programs[name])
-    return path
 
 
 @pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.lp")), ids=lambda p: p.stem)
@@ -41,8 +38,8 @@ def test_compile_files_matches_clingo(example):
 
 
 @pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
-def test_optimize(name):
-    path = _write(name, OPT_PROGRAMS)
+def test_optimize(tmp_path, name):
+    path = _write(tmp_path, name, OPT_PROGRAMS)
     res = ddasp.compile_text(OPT_PROGRAMS[name], optimize=True)
     assert set(res.answer_sets()) == set(clingo_answer_sets([path], project=True, optimize=True))
     expected = clingo_optimum([path])
@@ -88,6 +85,14 @@ def test_order_and_variables():
     assert [kyotodd.to_level(v) for v in vars_] == res_custom.levels
     assert res_custom.zdd.exact_count == 8
     assert res_custom.bdd is not None
+
+
+def test_show_terms():
+    res = ddasp.compile_text("{ a }. #show a/0. #show t : a. #show u : not a.")
+    assert res.names == {1: "a"}
+    assert sorted(res.terms) == [("t", [1]), ("u", [-1])]
+    assert set(res.answer_sets()) == {frozenset({"a", "t"}), frozenset({"u"})}
+    assert res.count == 2
 
 
 def test_external_and_hidden():

@@ -165,12 +165,10 @@ Program load_program(const Options& opt, std::vector<std::string>& warnings) {
 std::vector<Atom> read_order_file(const std::string& path, const Program& program) {
     std::ifstream in(path.c_str());
     if (!in) throw std::runtime_error("cannot open order file: " + path);
+    std::map<Atom, std::string> names = atom_names(program);
     std::map<std::string, Atom> by_name;
-    for (size_t o = 0; o < program.outputs().size(); ++o) {
-        const Output& out = program.outputs()[o];
-        if (out.condition.size() == 1 && out.condition[0] > 0 && !by_name.count(out.name)) {
-            by_name[out.name] = out.condition[0];
-        }
+    for (std::map<Atom, std::string>::const_iterator it = names.begin(); it != names.end(); ++it) {
+        if (!by_name.count(it->second)) by_name[it->second] = it->first;
     }
     std::vector<Atom> order;
     std::string line;
@@ -267,20 +265,12 @@ int main(int argc, char** argv) {
         if (opt.enumerate) {
             std::vector<std::vector<kyotodd::bddvar> > sets = res.zdd.enumerate();
             size_t limit = opt.enumerate_limit ? std::min(opt.enumerate_limit, sets.size()) : sets.size();
-            std::string fact_prefix;
-            for (size_t j = 0; j < res.fact_names.size(); ++j) {
-                if (!fact_prefix.empty()) fact_prefix += " ";
-                fact_prefix += res.fact_names[j];
-            }
             for (size_t i = 0; i < limit; ++i) {
-                std::string line = fact_prefix;
-                for (size_t j = 0; j < sets[i].size(); ++j) {
-                    Atom a = res.var_to_atom[sets[i][j]];
-                    if (!res.names.count(a)) continue;  // only #show'n atoms
-                    if (!line.empty()) line += " ";
-                    line += res.names[a];
-                }
-                std::cout << line << "\n";
+                std::vector<Atom> atoms;
+                for (size_t j = 0; j < sets[i].size(); ++j) atoms.push_back(res.var_to_atom[sets[i][j]]);
+                std::vector<std::string> shown = res.shown_names(atoms);
+                for (size_t j = 0; j < shown.size(); ++j) std::cout << (j ? " " : "") << shown[j];
+                std::cout << "\n";
             }
         }
 

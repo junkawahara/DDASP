@@ -9,6 +9,8 @@
  * allocates fresh BDD variables; variable numbers already in use are not touched.
  */
 
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -109,6 +111,27 @@ struct CompileStats {
           project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), groups(0), aux_vars(0) {}
 };
 
+/**
+ * @brief A #show output that is not the primary name of an atom: the name is
+ * displayed with an answer set when every literal of the condition holds.
+ * This covers additional names of an atom (`#show t : a.` when `a` is already
+ * shown) and negated conditions (`#show t : not a.`).
+ */
+struct ShowTerm {
+    std::string name;
+    std::vector<Literal> condition;
+
+    ShowTerm() {}
+    ShowTerm(const std::string& n, const std::vector<Literal>& c) : name(n), condition(c) {}
+};
+
+/**
+ * @brief Primary name of every named atom: the first #show output whose
+ * condition is exactly that atom (positive). Shared by the compiler and the tools
+ * that resolve atom names given by the user (order files).
+ */
+std::map<Atom, std::string> atom_names(const Program& program);
+
 /** @brief Result of a compilation. */
 struct CompileResult {
     /**
@@ -130,22 +153,35 @@ struct CompileResult {
     std::vector<Atom> var_to_atom;
     /** @brief atom_to_var[a] = DD variable of atom a (0 if the atom does not occur in the program). */
     std::vector<kyotodd::bddvar> atom_to_var;
-    /** @brief Atom names taken from #show output statements whose condition is a single positive atom. */
+    /** @brief Primary atom names (see atom_names()). */
     std::map<Atom, std::string> names;
     /**
      * @brief Names shown in every answer set: #show output statements with an empty
      * condition (gringo emits facts this way, without naming their atom).
      */
     std::vector<std::string> fact_names;
+    /**
+     * @brief The remaining #show outputs, in program order. The atoms of their
+     * conditions count as shown atoms (they survive projection), so the terms
+     * can be evaluated on the projected answer sets.
+     */
+    std::vector<ShowTerm> terms;
 
-    /** @brief Name of an atom: its #show name, or "__atom<id>" when it has none. */
+    /** @brief Name of an atom: its primary #show name, or "__atom<id>" when it has none. */
     std::string atom_name(Atom a) const;
+
+    /**
+     * @brief Everything displayed for one answer set, given as the atoms it
+     * contains: the fact names, the names of the named atoms in the order given,
+     * then the terms whose conditions hold.
+     */
+    std::vector<std::string> shown_names(const std::vector<Atom>& atoms) const;
 };
 
 /**
  * @brief Compile a program into a ZDD (and BDD) of its answer sets.
- * @throws std::invalid_argument on unsupported input, e.g. a #show statement whose
- *         condition is not a single positive atom while projecting.
+ * @throws std::invalid_argument on unsupported input (unknown atom in the order,
+ *         a #minimize weight outside the 32-bit range).
  */
 CompileResult compile(const Program& program, const CompileOptions& options = CompileOptions());
 

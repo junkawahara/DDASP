@@ -24,6 +24,10 @@ INLINE_PROGRAMS = {
     "hidden_atoms": "{ a; b }. c :- a. #show c/0.",
     "nested_negation": "{ a }. b :- not not a. #show a/0. #show b/0.",
     "conditional_literal": "p(1..3). { q(X) : p(X) }. r :- q(X) : p(X). #show r/0. #show q/1.",
+    "second_name": "{ a }. #show a/0. #show t : a.",
+    "negated_show": "{ a }. #show t : not a.",
+    "shared_name": "{ a; b }. #show t : a. #show t : b.",
+    "shown_fact_term": "c. #show c/0. #show w : c.",
     "graph_reachability": """
         edge(1,2). edge(2,3). edge(3,1). edge(3,4).
         { on(X,Y) : edge(X,Y) }.
