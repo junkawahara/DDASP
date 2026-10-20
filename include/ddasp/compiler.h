@@ -34,9 +34,25 @@ enum class Method {
 /** @brief Parse a method name ("twocopy" or "scc"); throws std::invalid_argument otherwise. */
 Method parse_method(const std::string& name);
 
+/** @brief How the DD variable order of the atoms is chosen. */
+enum class OrderHeuristic {
+    AtomId,       ///< ascending gringo atom id
+    NaturalName   ///< shown atoms sorted by name with numeric-aware comparison
+                  ///< (p(2) < p(10)); unnamed atoms are placed at the barycenter of
+                  ///< the atoms they share rules with
+};
+
+/** @brief Parse an order heuristic name ("id" or "name"); throws std::invalid_argument otherwise. */
+OrderHeuristic parse_order_heuristic(const std::string& name);
+
+/** @brief Numeric-aware string comparison: digit runs compare as numbers, the rest as text. */
+bool natural_less(const std::string& a, const std::string& b);
+
 /** @brief Compilation options. */
 struct CompileOptions {
     Method method;
+    /** Heuristic for the variable order of atoms not listed in @c order. */
+    OrderHeuristic order_heuristic;
     /**
      * Project the answer sets onto the shown atoms (#show). Hidden atoms are
      * existentially quantified away, so answer sets that differ only in hidden
@@ -47,12 +63,14 @@ struct CompileOptions {
     bool optimize;
     /**
      * Atom order for the DD variables, listed from the top of the diagram down.
-     * Empty = ascending atom id. Atoms of the program missing from the list are
-     * appended (in ascending id order) below the listed ones.
+     * Atoms of the program missing from the list are appended below the listed
+     * ones in the order given by @c order_heuristic.
      */
     std::vector<Atom> order;
 
-    CompileOptions() : method(Method::Scc), project_to_shown(true), optimize(false) {}
+    CompileOptions()
+        : method(Method::Scc), order_heuristic(OrderHeuristic::NaturalName), project_to_shown(true),
+          optimize(false) {}
 };
 
 /**
@@ -70,6 +88,27 @@ struct CostFunction {
     CostFunction() : priority(0), offset(0) {}
 };
 
+/** @brief Timing and size statistics of a compilation (seconds / node counts). */
+struct CompileStats {
+    double order_time;       ///< choosing the variable order
+    double models_time;      ///< building the per-rule constraints of Models(X)
+    double supported_time;   ///< building the per-atom constraints of Supported(X) (Scc method only)
+    double conjoin_time;     ///< conjoining those constraints
+    double unfounded_time;   ///< building and quantifying the unfounded-set conditions
+    double convert_time;     ///< BDD -> ZDD conversion
+    double optimize_time;    ///< #minimize filtering
+    double project_time;     ///< #show projection and the final ZDD -> BDD conversion
+    uint64_t models_nodes;   ///< size of Models(X) (∧ Supported(X) for the Scc method)
+    uint64_t stable_nodes;   ///< size of the stable-model BDD over all atoms
+    uint64_t peak_nodes;     ///< largest value of kyotodd::bddused() observed
+    size_t groups;           ///< number of unfounded-set groups (SCCs) quantified
+    size_t aux_vars;         ///< number of auxiliary u variables allocated
+
+    CompileStats()
+        : order_time(0), models_time(0), supported_time(0), conjoin_time(0), unfounded_time(0), convert_time(0), optimize_time(0),
+          project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), groups(0), aux_vars(0) {}
+};
+
 /** @brief Result of a compilation. */
 struct CompileResult {
     /**
@@ -85,6 +124,8 @@ struct CompileResult {
     std::vector<CostFunction> costs;
     /** @brief Optimal cost per level (same order as @c costs); filled only when optimizing a consistent program. */
     std::vector<long long> optimum;
+    /** @brief Statistics of the compilation. */
+    CompileStats stats;
     /** @brief var_to_atom[v] = atom of DD variable v (0 for variables not used by this result). */
     std::vector<Atom> var_to_atom;
     /** @brief atom_to_var[a] = DD variable of atom a (0 if the atom does not occur in the program). */

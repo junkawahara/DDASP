@@ -1,6 +1,8 @@
 #include "ddasp/compiler.h"
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <set>
 #include <stdexcept>
 
@@ -16,6 +18,40 @@ std::string CompileResult::atom_name(Atom a) const {
     std::map<Atom, std::string>::const_iterator it = names.find(a);
     if (it != names.end()) return it->second;
     return "__atom" + std::to_string(a);
+}
+
+OrderHeuristic parse_order_heuristic(const std::string& name) {
+    if (name == "id") return OrderHeuristic::AtomId;
+    if (name == "name") return OrderHeuristic::NaturalName;
+    throw std::invalid_argument("unknown order heuristic '" + name + "' (expected id or name)");
+}
+
+bool natural_less(const std::string& a, const std::string& b) {
+    size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        bool da = isdigit(static_cast<unsigned char>(a[i])) != 0;
+        bool db = isdigit(static_cast<unsigned char>(b[j])) != 0;
+        if (da && db) {
+            size_t i2 = i, j2 = j;
+            while (i2 < a.size() && isdigit(static_cast<unsigned char>(a[i2]))) ++i2;
+            while (j2 < b.size() && isdigit(static_cast<unsigned char>(b[j2]))) ++j2;
+            // Compare digit runs numerically: strip leading zeros, then by length, then lexically.
+            size_t si = i, sj = j;
+            while (si + 1 < i2 && a[si] == '0') ++si;
+            while (sj + 1 < j2 && b[sj] == '0') ++sj;
+            size_t la = i2 - si, lb = j2 - sj;
+            if (la != lb) return la < lb;
+            int c = a.compare(si, la, b, sj, lb);
+            if (c != 0) return c < 0;
+            i = i2;
+            j = j2;
+        } else {
+            if (a[i] != b[j]) return a[i] < b[j];
+            ++i;
+            ++j;
+        }
+    }
+    return (a.size() - i) < (b.size() - j);
 }
 
 Method parse_method(const std::string& name) {
@@ -48,20 +84,133 @@ std::vector<Atom> collect_atoms(const Program& prog) {
     return std::vector<Atom>(atoms.begin(), atoms.end());
 }
 
-/** Atom order from top to bottom: the user-given order first, then the rest. */
-std::vector<Atom> resolve_order(const std::vector<Atom>& atoms, const std::vector<Atom>& user_order) {
+/** Atom names from the #show output statements (fills names and fact_names of the result). */
+void collect_names(const Program& prog, bool projecting, CompileResult& res) {
+    for (size_t o = 0; o < prog.outputs().size(); ++o) {
+        const Output& out = prog.outputs()[o];
+        if (out.condition.empty()) {
+            res.fact_names.push_back(out.name);
+        } else if (out.condition.size() == 1 && is_positive(out.condition[0])) {
+            Atom a = out.condition[0];
+            if (!res.names.count(a)) res.names[a] = out.name;
+        } else if (projecting) {
+            throw std::invalid_argument(
+                "#show statement for '" + out.name +
+                "' has a condition that is not a single positive atom; "
+                "projection onto shown atoms is not possible (disable projection)");
+        }
+    }
+}
+
+struct NameLess {
+    const std::map<Atom, std::string>* names;
+    bool operator()(Atom a, Atom b) const {
+        const std::string& na = names->find(a)->second;
+        const std::string& nb = names->find(b)->second;
+        if (natural_less(na, nb)) return true;
+        if (natural_less(nb, na)) return false;
+        return a < b;
+    }
+};
+
+struct KeyLess {
+    const std::vector<double>* key;
+    bool operator()(Atom a, Atom b) const {
+        if ((*key)[a] != (*key)[b]) return (*key)[a] < (*key)[b];
+        return a < b;
+    }
+};
+
+/**
+ * NaturalName heuristic: shown atoms sorted by name; every unnamed atom is
+ * placed at the average position of the atoms it shares a rule with
+ * (two refinement passes so that unnamed atoms can also follow each other).
+ */
+std::vector<Atom> natural_name_order(const Program& prog, const std::vector<Atom>& atoms,
+                                     const std::map<Atom, std::string>& names) {
+    Atom max_atom = atoms.empty() ? 0 : atoms.back();
+    std::vector<Atom> named, unnamed;
+    for (size_t i = 0; i < atoms.size(); ++i) (names.count(atoms[i]) ? named : unnamed).push_back(atoms[i]);
+    NameLess nl = {&names};
+    std::sort(named.begin(), named.end(), nl);
+    if (unnamed.empty()) return named;
+
+    // Neighbours: atoms sharing a rule.
+    std::vector<std::vector<Atom> > nbr(max_atom + 1);
+    for (size_t r = 0; r < prog.rules().size(); ++r) {
+        const Rule& rule = prog.rules()[r];
+        std::vector<Atom> in_rule(rule.head);
+        for (size_t i = 0; i < rule.body.lits.size(); ++i) in_rule.push_back(atom_of(rule.body.lits[i].lit));
+        for (size_t i = 0; i < in_rule.size(); ++i) {
+            if (names.count(in_rule[i])) continue;  // only unnamed atoms need neighbours
+            for (size_t j = 0; j < in_rule.size(); ++j) {
+                if (i != j) nbr[in_rule[i]].push_back(in_rule[j]);
+            }
+        }
+    }
+
+    const double unplaced = -1.0;
+    std::vector<double> key(max_atom + 1, unplaced);
+    for (size_t i = 0; i < named.size(); ++i) key[named[i]] = static_cast<double>(i);
+    for (int pass = 0; pass < 2; ++pass) {
+        std::vector<double> next(key);
+        for (size_t u = 0; u < unnamed.size(); ++u) {
+            Atom a = unnamed[u];
+            double sum = 0;
+            int cnt = 0;
+            for (size_t k = 0; k < nbr[a].size(); ++k) {
+                double kk = key[nbr[a][k]];
+                if (kk != unplaced) {
+                    sum += kk;
+                    ++cnt;
+                }
+            }
+            if (cnt > 0) next[a] = sum / cnt + 0.5;  // just below the barycenter of its neighbours
+        }
+        key = next;
+    }
+    double tail = static_cast<double>(named.size()) + 1.0;
+    for (size_t u = 0; u < unnamed.size(); ++u) {
+        if (key[unnamed[u]] == unplaced) key[unnamed[u]] = tail;
+    }
+    std::vector<Atom> order(atoms);
+    KeyLess kl = {&key};
+    std::sort(order.begin(), order.end(), kl);
+    return order;
+}
+
+/** Atom order from top to bottom: the user-given order first, then the heuristic order. */
+std::vector<Atom> resolve_order(const Program& prog, const std::vector<Atom>& atoms,
+                                const CompileOptions& options, const std::map<Atom, std::string>& names) {
     std::set<Atom> known(atoms.begin(), atoms.end());
     std::vector<Atom> order;
     std::set<Atom> placed;
-    for (size_t i = 0; i < user_order.size(); ++i) {
-        Atom a = user_order[i];
+    for (size_t i = 0; i < options.order.size(); ++i) {
+        Atom a = options.order[i];
         if (!known.count(a)) throw std::invalid_argument("order mentions unknown atom " + std::to_string(a));
         if (placed.insert(a).second) order.push_back(a);
     }
-    for (size_t i = 0; i < atoms.size(); ++i) {
-        if (!placed.count(atoms[i])) order.push_back(atoms[i]);
+    std::vector<Atom> rest = atoms;
+    if (options.order_heuristic == OrderHeuristic::NaturalName) rest = natural_name_order(prog, atoms, names);
+    for (size_t i = 0; i < rest.size(); ++i) {
+        if (!placed.count(rest[i])) order.push_back(rest[i]);
     }
     return order;
+}
+
+/** Conjoin BDDs in increasing order of their top level, which keeps intermediate results local. */
+BDD conjoin_sorted(std::vector<BDD>& parts) {
+    struct TopLess {
+        bool operator()(const BDD& a, const BDD& b) const {
+            bddvar la = a.is_terminal() ? 0 : kyotodd::bddlevofvar(a.top());
+            bddvar lb = b.is_terminal() ? 0 : kyotodd::bddlevofvar(b.top());
+            return la < lb;
+        }
+    };
+    std::stable_sort(parts.begin(), parts.end(), TopLess());
+    BDD f = BDD::True;
+    for (size_t i = 0; i < parts.size(); ++i) f &= parts[i];
+    return f;
 }
 
 /**
@@ -173,18 +322,35 @@ public:
         index_rules(max_atom);
     }
 
-    CompileResult run() {
-        CompileResult res;
+    CompileResult run(CompileResult& res) {
         res.var_to_atom = var_to_atom_;
         res.atom_to_var = atom_to_var_;
-        collect_names(res);
+        CompileStats& st = res.stats;
+        st.groups = groups_.size();
+        for (size_t i = 0; i < in_group_.size(); ++i) st.aux_vars += in_group_[i] ? 1 : 0;
 
-        BDD stable = build_models();
-        if (options_.method == Method::Scc) stable &= build_supported();
+        Timer t;
+        std::vector<BDD> parts;
+        build_models(parts);
+        st.models_time = t.lap();
+        if (options_.method == Method::Scc) {
+            build_supported(parts);
+            st.supported_time = t.lap();
+        }
+        BDD stable = conjoin_sorted(parts);
+        parts.clear();
+        st.conjoin_time = t.lap();
+        st.models_nodes = stable.raw_size();
+        note_peak(st);
         for (size_t g = 0; g < groups_.size(); ++g) {
             stable &= ~build_unfounded(groups_[g]);
+            note_peak(st);
         }
+        st.unfounded_time = t.lap();
+        st.stable_nodes = stable.raw_size();
         ZDD family = bdd_to_zdd_over(stable, x_vars_);
+        st.convert_time = t.lap();
+        note_peak(st);
 
         res.costs = build_costs();
         if (options_.optimize && !family.is_zero()) {
@@ -195,6 +361,7 @@ public:
                 res.optimum.push_back(best + res.costs[c].offset);
             }
         }
+        st.optimize_time = t.lap();
 
         res.vars = x_vars_;
         if (options_.project_to_shown) {
@@ -208,10 +375,28 @@ public:
         }
         res.zdd = family;
         res.bdd = zdd_to_bdd_over(family, res.vars);
+        st.project_time = t.lap();
+        note_peak(st);
         return res;
     }
 
 private:
+    struct Timer {
+        std::chrono::steady_clock::time_point last;
+        Timer() : last(std::chrono::steady_clock::now()) {}
+        double lap() {
+            std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+            double s = std::chrono::duration<double>(now - last).count();
+            last = now;
+            return s;
+        }
+    };
+
+    static void note_peak(CompileStats& st) {
+        uint64_t used = kyotodd::bddused();
+        if (used > st.peak_nodes) st.peak_nodes = used;
+    }
+
     void allocate_variables(Atom max_atom) {
         atom_to_var_.assign(max_atom + 1, 0);
         atom_to_uvar_.assign(max_atom + 1, 0);
@@ -294,17 +479,15 @@ private:
     };
 
     /** Models(X): X satisfies every rule classically (choice rules impose nothing). */
-    BDD build_models() const {
-        BDD models = BDD::True;
+    void build_models(std::vector<BDD>& parts) const {
         LitX lx = {this};
         for (size_t r = 0; r < prog_.rules().size(); ++r) {
             const Rule& rule = prog_.rules()[r];
             if (rule.head_type == HeadType::Choice) continue;
             BDD head = BDD::False;
             for (size_t i = 0; i < rule.head.size(); ++i) head |= x_of(rule.head[i]);
-            models &= ~body_bdd(rule.body, lx) | head;
+            parts.push_back(~body_bdd(rule.body, lx) | head);
         }
-        return models;
     }
 
     /**
@@ -312,8 +495,7 @@ private:
      * true in X and whose other head atoms are false in X (external atoms are
      * always supported). This is the unfounded-set condition for singleton sets.
      */
-    BDD build_supported() const {
-        BDD supported = BDD::True;
+    void build_supported(std::vector<BDD>& parts) const {
         LitX lx = {this};
         for (size_t i = 0; i < order_.size(); ++i) {
             Atom a = order_[i];
@@ -330,9 +512,8 @@ private:
                 }
                 support |= s;
             }
-            supported &= ~x_of(a) | support;
+            parts.push_back(~x_of(a) | support);
         }
-        return supported;
     }
 
     /** Bad_G(X) = ∃U ⊆ G (U ∩ X ≠ ∅ ∧ U ⊆ X ∧ U unfounded w.r.t. X). */
@@ -391,23 +572,6 @@ private:
         return f.exist(uvars);
     }
 
-    void collect_names(CompileResult& res) const {
-        for (size_t o = 0; o < prog_.outputs().size(); ++o) {
-            const Output& out = prog_.outputs()[o];
-            if (out.condition.empty()) {
-                res.fact_names.push_back(out.name);
-            } else if (out.condition.size() == 1 && is_positive(out.condition[0])) {
-                Atom a = out.condition[0];
-                if (!res.names.count(a)) res.names[a] = out.name;
-            } else if (options_.project_to_shown) {
-                throw std::invalid_argument(
-                    "#show statement for '" + out.name +
-                    "' has a condition that is not a single positive atom; "
-                    "projection onto shown atoms is not possible (disable projection)");
-            }
-        }
-    }
-
     /** Linear cost functions of the #minimize statements, most important priority first. */
     std::vector<CostFunction> build_costs() const {
         std::map<int, CostFunction> by_priority;
@@ -462,10 +626,14 @@ private:
 }  // namespace
 
 CompileResult compile(const Program& program, const CompileOptions& options) {
+    CompileResult res;
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    collect_names(program, options.project_to_shown, res);
     std::vector<Atom> atoms = collect_atoms(program);
-    std::vector<Atom> order = resolve_order(atoms, options.order);
+    std::vector<Atom> order = resolve_order(program, atoms, options, res.names);
+    res.stats.order_time = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     Compiler c(program, order, options);
-    return c.run();
+    return c.run(res);
 }
 
 }  // namespace ddasp

@@ -39,17 +39,26 @@ CompileOptions no_projection() {
     return o;
 }
 
-/** Compile with both methods and check that they agree; return the family. */
+/** Compile with both methods and both order heuristics; check they agree and return the family. */
 Family compile_family(const std::string& aspif, const CompileOptions& opts = no_projection()) {
     Program p = read_aspif_string(aspif);
-    CompileOptions two = opts;
-    two.method = Method::TwoCopy;
-    CompileOptions scc = opts;
-    scc.method = Method::Scc;
-    Family f_two = family_of(compile(p, two));
-    Family f_scc = family_of(compile(p, scc));
-    EXPECT_EQ(f_two, f_scc) << "methods disagree";
-    return f_scc;
+    Family result;
+    bool first = true;
+    for (int m = 0; m < 2; ++m) {
+        for (int h = 0; h < 2; ++h) {
+            CompileOptions o = opts;
+            o.method = m == 0 ? Method::TwoCopy : Method::Scc;
+            o.order_heuristic = h == 0 ? OrderHeuristic::AtomId : OrderHeuristic::NaturalName;
+            Family f = family_of(compile(p, o));
+            if (first) {
+                result = f;
+                first = false;
+            } else {
+                EXPECT_EQ(result, f) << "method " << m << " / heuristic " << h << " disagrees";
+            }
+        }
+    }
+    return result;
 }
 
 std::set<Atom> S() { return std::set<Atom>(); }
@@ -197,7 +206,9 @@ TEST(Compiler, NamesAndVariableMaps) {
         "4 1 a 1 1\n"
         "4 4 p(1) 1 2\n"
         "0\n");
-    CompileResult res = compile(p, no_projection());
+    CompileOptions by_id = no_projection();
+    by_id.order_heuristic = OrderHeuristic::AtomId;
+    CompileResult res = compile(p, by_id);
     EXPECT_EQ("a", res.atom_name(1));
     EXPECT_EQ("p(1)", res.atom_name(2));
     EXPECT_EQ("__atom3", res.atom_name(3));
@@ -396,4 +407,41 @@ TEST(Compiler, WeightBodyInsideLoop) {
         "1 0 1 2 0 1 1\n"
         "0\n";
     EXPECT_EQ(F(S(), S(1, 2, 3)), compile_family(text));
+}
+
+TEST(Compiler, NaturalLess) {
+    EXPECT_TRUE(natural_less("p(2)", "p(10)"));
+    EXPECT_FALSE(natural_less("p(10)", "p(2)"));
+    EXPECT_TRUE(natural_less("p(1,9)", "p(1,10)"));
+    EXPECT_TRUE(natural_less("a", "b"));
+    EXPECT_TRUE(natural_less("p(1)", "p(1,2)"));
+    EXPECT_FALSE(natural_less("p(1)", "p(1)"));
+    EXPECT_TRUE(natural_less("p(007)", "p(8)"));
+    EXPECT_TRUE(natural_less("q", "q(1)"));
+    EXPECT_EQ(OrderHeuristic::AtomId, parse_order_heuristic("id"));
+    EXPECT_EQ(OrderHeuristic::NaturalName, parse_order_heuristic("name"));
+    EXPECT_THROW(parse_order_heuristic("x"), std::invalid_argument);
+}
+
+TEST(Compiler, NaturalNameOrderPlacesUnnamedAtomsNearNeighbours) {
+    // Atoms: 1=p(10), 2=p(2), 3=p(1); 4 unnamed, used only with p(10); 5 unnamed, isolated.
+    // {p(1);p(2);p(10)}.  aux4 :- p(10).  {aux5}.
+    Program p = read_aspif_string(
+        "asp 1 0 0\n"
+        "1 1 3 1 2 3 0 0\n"
+        "1 0 1 4 0 1 1\n"
+        "1 1 1 5 0 0\n"
+        "4 5 p(10) 1 1\n"
+        "4 4 p(2) 1 2\n"
+        "4 4 p(1) 1 3\n"
+        "0\n");
+    CompileResult res = compile(p, no_projection());
+    ASSERT_EQ(5u, res.vars.size());
+    // Top to bottom: p(1), p(2), p(10), aux4 (next to p(10)), aux5 (isolated, last).
+    EXPECT_EQ(res.atom_to_var[3], res.vars[0]);
+    EXPECT_EQ(res.atom_to_var[2], res.vars[1]);
+    EXPECT_EQ(res.atom_to_var[1], res.vars[2]);
+    EXPECT_EQ(res.atom_to_var[4], res.vars[3]);
+    EXPECT_EQ(res.atom_to_var[5], res.vars[4]);
+    EXPECT_EQ(16u, res.zdd.card());
 }

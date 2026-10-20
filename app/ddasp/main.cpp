@@ -34,6 +34,7 @@ struct Options {
     bool all_atoms = false;
     bool optimize = false;
     std::string method = "scc";
+    std::string order = "name";
     size_t enumerate_limit = 0;  // 0 = unlimited
 };
 
@@ -55,6 +56,7 @@ void usage(std::ostream& os) {
           "                     becomes a DD variable)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
           "  --method M         stable-model method: scc (default) or twocopy\n"
+          "  --order H          variable order heuristic: name (default) or id\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
           "                     `CMD --output=intermediate FILE...`\n"
           "  --stats            print node counts and timings to stderr\n"
@@ -91,6 +93,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.optimize = true;
         } else if (a == "--method") {
             opt.method = need_value("--method");
+        } else if (a == "--order") {
+            opt.order = need_value("--order");
         } else if (a == "--atoms") {
             opt.atoms_file = need_value("--atoms");
         } else if (a == "--gringo") {
@@ -186,15 +190,31 @@ int main(int argc, char** argv) {
         copts.project_to_shown = !opt.all_atoms;
         copts.optimize = opt.optimize;
         copts.method = parse_method(opt.method);
+        copts.order_heuristic = parse_order_heuristic(opt.order);
         CompileResult res = compile(program, copts);
         double t_compile = seconds_since(t1);
 
         if (opt.stats) {
+            const CompileStats& st = res.stats;
             std::cerr << "rules: " << program.rules().size() << "\n"
-                      << "atoms: " << res.vars.size() << "\n"
+                      << "atoms: " << res.var_to_atom.size() - 1 - st.aux_vars << "\n"
+                      << "shown atoms: " << res.vars.size() << "\n"
+                      << "aux vars: " << st.aux_vars << "\n"
+                      << "groups: " << st.groups << "\n"
+                      << "models nodes: " << st.models_nodes << "\n"
+                      << "stable nodes: " << st.stable_nodes << "\n"
                       << "zdd nodes: " << res.zdd.raw_size() << "\n"
                       << "bdd nodes: " << res.bdd.raw_size() << "\n"
+                      << "peak live nodes: " << st.peak_nodes << "\n"
                       << "load time: " << t_load << " s\n"
+                      << "order time: " << st.order_time << " s\n"
+                      << "models time: " << st.models_time << " s\n"
+                      << "supported time: " << st.supported_time << " s\n"
+                      << "conjoin time: " << st.conjoin_time << " s\n"
+                      << "unfounded time: " << st.unfounded_time << " s\n"
+                      << "convert time: " << st.convert_time << " s\n"
+                      << "optimize time: " << st.optimize_time << " s\n"
+                      << "project time: " << st.project_time << " s\n"
                       << "compile time: " << t_compile << " s\n";
         }
 

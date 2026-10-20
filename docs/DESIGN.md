@@ -44,10 +44,43 @@ Stable(X) = Models(X) ∧ ¬∃Y [ Y ⊆ X ∧ Y ≠ X ∧ Y ⊨ P^X ]
 This handles normal, choice, constraint, disjunctive (including non-HCF) rules and
 weight bodies uniformly, at the cost of doubling the number of BDD variables.
 
-## Stable model semantics: iterative loop formulas (fast path, later milestone)
+## Stable model semantics: SCC-local unfounded sets (default, `--method scc`)
 
-Start from the Clark completion BDD, repeatedly extract a non-stable model, compute an
-unfounded set, conjoin its loop formula, until no non-stable model remains.
+Both methods are implemented by one compiler (`src/compiler.cpp`) in terms of
+*unfounded sets*: with auxiliary variables `u_a` ("a ∈ U") and Y = X \ U,
+
+```
+Stable(X) = Models(X) ∧ ¬∃U (U ≠ ∅ ∧ U ⊆ X ∧ U is unfounded w.r.t. X)
+```
+
+A rule r does not support U when its body is false once the positive occurrences
+of U's atoms are made false, or no head atom is in U, or a head atom outside U is
+in X (Leone, Rullo, Scarcello). The two-copy method uses a single group U ⊆ all atoms.
+
+Any non-empty unfounded set contains a non-empty unfounded set lying inside one
+strongly connected component of the positive dependency graph (edges from positive
+body atoms to head atoms; take the lowest SCC that meets U). The SCC method therefore
+
+- adds `Supported(X)` for every atom (the singleton unfounded sets, no auxiliary
+  variables needed), and
+- quantifies one unfounded-set condition per non-trivial SCC, with `u` variables
+  only for the atoms of such SCCs. Tight programs need no auxiliary variable at all.
+
+This is exact for disjunctive, choice and weight rules alike. An iterative
+"find a non-stable model, add its loop formula" scheme was considered and
+rejected: deciding whether any non-stable model remains in the BDD is itself the
+symbolic unfounded-set check, and checking models one by one amounts to
+enumeration.
+
+## Variable order and conjunction order
+
+- `--order name` (default): shown atoms sorted by name with numeric-aware
+  comparison (`q(1,2) < q(1,10)`), unnamed atoms placed at the barycenter of the
+  atoms they share rules with (two refinement passes). `--order id` keeps
+  gringo's numbering. `CompileOptions::order` lists atoms to put on top.
+- All per-rule and per-atom constraints are conjoined in increasing order of
+  their top level (`conjoin_sorted`). On 8-queens this plus the name order took
+  the compilation from 27 s / 34M peak nodes to 0.02 s / 92k peak nodes.
 
 ## #show projection (default on)
 
