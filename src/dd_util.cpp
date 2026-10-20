@@ -101,6 +101,15 @@ ZDD bdd_to_zdd_over(const BDD& f, const std::vector<bddvar>& vars) {
     return ret;
 }
 
+BDD variable_set(const std::vector<bddvar>& vars) {
+    std::vector<bddvar> sorted(vars);
+    std::sort(sorted.begin(), sorted.end(), LevelDesc());
+    sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+    BDD set = BDD::False;
+    for (size_t i = sorted.size(); i-- > 0;) set = BDD::getnode(sorted[i], set, BDD::True);  // lowest level first
+    return set;
+}
+
 namespace {
 
 typedef std::unordered_map<bddp, std::unordered_map<size_t, BDD> > ConvBackMemo;

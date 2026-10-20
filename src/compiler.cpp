@@ -177,17 +177,20 @@ std::vector<Atom> natural_name_order(const Program& prog, const std::vector<Atom
     std::sort(named.begin(), named.end(), nl);
     if (unnamed.empty()) return named;
 
-    // Neighbours: atoms sharing a rule.
-    std::vector<std::vector<Atom> > nbr(max_atom + 1);
-    for (size_t r = 0; r < prog.rules().size(); ++r) {
+    // An unnamed atom's neighbours are the other atoms of the rules it occurs in
+    // (one occurrence = one neighbour, as a multiset). Rather than listing them,
+    // which is quadratic in the rule length, each pass sums the placed keys per
+    // rule once and every atom subtracts its own contribution.
+    const size_t R = prog.rules().size();
+    std::vector<std::vector<Atom> > rule_atoms(R);
+    std::vector<std::vector<size_t> > rules_of(max_atom + 1);
+    for (size_t r = 0; r < R; ++r) {
         const Rule& rule = prog.rules()[r];
-        std::vector<Atom> in_rule(rule.head);
+        std::vector<Atom>& in_rule = rule_atoms[r];
+        in_rule = rule.head;
         for (size_t i = 0; i < rule.body.lits.size(); ++i) in_rule.push_back(atom_of(rule.body.lits[i].lit));
         for (size_t i = 0; i < in_rule.size(); ++i) {
-            if (names.count(in_rule[i])) continue;  // only unnamed atoms need neighbours
-            for (size_t j = 0; j < in_rule.size(); ++j) {
-                if (i != j) nbr[in_rule[i]].push_back(in_rule[j]);
-            }
+            if (!names.count(in_rule[i])) rules_of[in_rule[i]].push_back(r);
         }
     }
 
@@ -195,19 +198,29 @@ std::vector<Atom> natural_name_order(const Program& prog, const std::vector<Atom
     std::vector<double> key(max_atom + 1, unplaced);
     for (size_t i = 0; i < named.size(); ++i) key[named[i]] = static_cast<double>(i);
     for (int pass = 0; pass < 2; ++pass) {
+        std::vector<double> rule_sum(R, 0.0);
+        std::vector<size_t> rule_cnt(R, 0);
+        for (size_t r = 0; r < R; ++r) {
+            for (size_t i = 0; i < rule_atoms[r].size(); ++i) {
+                double k = key[rule_atoms[r][i]];
+                if (k != unplaced) {
+                    rule_sum[r] += k;
+                    ++rule_cnt[r];
+                }
+            }
+        }
         std::vector<double> next(key);
         for (size_t u = 0; u < unnamed.size(); ++u) {
             Atom a = unnamed[u];
+            bool placed = key[a] != unplaced;
             double sum = 0;
-            int cnt = 0;
-            for (size_t k = 0; k < nbr[a].size(); ++k) {
-                double kk = key[nbr[a][k]];
-                if (kk != unplaced) {
-                    sum += kk;
-                    ++cnt;
-                }
+            size_t cnt = 0;
+            for (size_t k = 0; k < rules_of[a].size(); ++k) {
+                size_t r = rules_of[a][k];
+                sum += rule_sum[r] - (placed ? key[a] : 0.0);
+                cnt += rule_cnt[r] - (placed ? 1 : 0);
             }
-            if (cnt > 0) next[a] = sum / cnt + 0.5;  // just below the barycenter of its neighbours
+            if (cnt > 0) next[a] = sum / static_cast<double>(cnt) + 0.5;  // just below the barycenter
         }
         key = next;
     }
@@ -564,9 +577,9 @@ private:
         std::set<Atom> group(group_atoms.begin(), group_atoms.end());
         LitReduct lr = {this, &group};
 
-        BDD f = BDD::True;
+        std::vector<BDD> parts;
         for (size_t i = 0; i < group_atoms.size(); ++i) {
-            f &= ~u_of(group_atoms[i]) | x_of(group_atoms[i]);  // U ⊆ X
+            parts.push_back(~u_of(group_atoms[i]) | x_of(group_atoms[i]));  // U ⊆ X
         }
 
         std::set<size_t> rules;
@@ -582,7 +595,7 @@ private:
                 for (size_t h = 0; h < rule.head.size(); ++h) {
                     Atom a = rule.head[h];
                     if (!group.count(a)) continue;
-                    f &= ~body | ~u_of(a);
+                    parts.push_back(~body | ~u_of(a));
                 }
             } else {
                 // r does not support U: body false, or head ∩ U = ∅, or (head \ U) ∩ X ≠ ∅.
@@ -597,12 +610,12 @@ private:
                         head_outside_u_in_x |= x_of(a);
                     }
                 }
-                f &= ~body | ~head_in_u | head_outside_u_in_x;
+                parts.push_back(~body | ~head_in_u | head_outside_u_in_x);
             }
         }
         // #external a is treated as the choice rule {a}: a can never be unfounded.
         for (size_t i = 0; i < group_atoms.size(); ++i) {
-            if (is_external_[group_atoms[i]]) f &= ~u_of(group_atoms[i]);
+            if (is_external_[group_atoms[i]]) parts.push_back(~u_of(group_atoms[i]));
         }
 
         BDD nonempty = BDD::False;
@@ -611,8 +624,9 @@ private:
             nonempty |= u_of(group_atoms[i]);
             uvars.push_back(atom_to_uvar_[group_atoms[i]]);
         }
-        f &= nonempty;
-        return f.exist(uvars);
+        parts.push_back(nonempty);
+        BDD f = conjoin_sorted(parts);
+        return f.exist(variable_set(uvars));
     }
 
     /** Linear cost functions of the #minimize statements, most important priority first. */

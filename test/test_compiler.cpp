@@ -512,3 +512,14 @@ TEST(DdUtil, DeepConversionsDoNotRecurse) {
     BDD at_most_one_missing = threshold_bdd(terms, weights, static_cast<long long>(n) - 1);
     EXPECT_EQ(std::to_string(n + 1), bdd_to_zdd_over(at_most_one_missing, vars).exact_count().to_string());
 }
+
+TEST(DdUtil, VariableSetQuantifiesLikeTheVectorForm) {
+    bddvar a = kyotodd::bddnewvar(), b = kyotodd::bddnewvar(), c = kyotodd::bddnewvar();
+    std::vector<bddvar> vars;
+    vars.push_back(c);
+    vars.push_back(a);
+    vars.push_back(a);
+    BDD f = (BDD::prime(a) & BDD::prime(b)) | (~BDD::prime(b) & BDD::prime(c));
+    EXPECT_EQ(f.exist(vars), f.exist(variable_set(vars)));
+    EXPECT_EQ(f, f.exist(variable_set(std::vector<bddvar>())));
+}
