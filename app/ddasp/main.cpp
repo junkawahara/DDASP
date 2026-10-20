@@ -3,6 +3,10 @@
  * @brief ddasp command line tool: ground ASP program -> ZDD of answer sets.
  */
 
+#include <sys/wait.h>
+
+#include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +21,7 @@
 #include "bdd.h"
 #include "ddasp/aspif_reader.h"
 #include "ddasp/compiler.h"
+#include "ddasp/dd_util.h"
 
 using namespace ddasp;
 
@@ -43,27 +48,33 @@ void usage(std::ostream& os) {
     os << "Usage: ddasp [options] FILE...\n"
           "\n"
           "Compile a ground ASP program into a ZDD representing all answer sets.\n"
-          "FILE is an aspif file (*.aspif, as produced by `gringo --output=intermediate`).\n"
-          "Any other file is passed to gringo first (see --gringo).\n"
+          "FILE is an aspif file (*.aspif, as produced by `gringo --output=intermediate`)\n"
+          "and is read as it is; any other files are passed to gringo first (see\n"
+          "--gringo). The two kinds cannot be mixed.\n"
+          "\n"
+          "By default the summary lines `answer sets: N` and (with --opt) `optimum: ...`\n"
+          "are printed; -q suppresses them.\n"
           "\n"
           "Options:\n"
-          "  --count            print the number of answer sets\n"
-          "  --enumerate        print every answer set (one per line, shown atoms)\n"
-          "  --limit N          print at most N answer sets with --enumerate\n"
+          "  --count            print the bare number of answer sets (meant for -q)\n"
+          "  --enumerate        print every answer set (one per line, shown atoms in\n"
+          "                     variable-order, i.e. name order)\n"
+          "  --limit N          print at most N answer sets with --enumerate (0 = all)\n"
           "  -o FILE            write the ZDD to FILE (KyotoDD binary format)\n"
           "  --bdd              write a BDD instead of a ZDD with -o\n"
-          "  --atoms FILE       write the variable/level/atom/name table to FILE\n"
+          "  --atoms FILE       write the variable/level/atom/name table to FILE, followed\n"
+          "                     by one `# minimize` line per priority (level:weight)\n"
           "  --all-atoms        do not project onto the shown atoms (every atom\n"
           "                     becomes a DD variable)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
           "  --method M         stable-model method: scc (default) or twocopy\n"
           "  --order H          variable order heuristic: name (default), id, or a\n"
-          "                     file with one atom name per line (top of the DD first;\n"
-          "                     remaining atoms follow in name order)\n"
+          "                     file with one atom name (or __atomN) per line (top of\n"
+          "                     the DD first; remaining atoms follow in name order)\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
           "                     `CMD --output=intermediate FILE...`\n"
           "  --stats            print node counts and timings to stderr\n"
-          "  -q, --quiet        do not print the summary line\n"
+          "  -q, --quiet        do not print the summary lines\n"
           "  -h, --help         show this help\n";
 }
 
@@ -85,7 +96,15 @@ bool parse_args(int argc, char** argv, Options& opt) {
         } else if (a == "--enumerate") {
             opt.enumerate = true;
         } else if (a == "--limit") {
-            opt.enumerate_limit = static_cast<size_t>(std::strtoull(need_value("--limit").c_str(), 0, 10));
+            std::string v = need_value("--limit");
+            char* end = 0;
+            errno = 0;
+            unsigned long long n = std::strtoull(v.c_str(), &end, 10);
+            if (v.empty() || *end != '\0' || errno != 0 || v[0] == '-') {
+                std::cerr << "ddasp: --limit expects a non-negative integer, got '" << v << "'\n";
+                return false;
+            }
+            opt.enumerate_limit = static_cast<size_t>(n);
         } else if (a == "-o") {
             opt.output = need_value("-o");
         } else if (a == "--bdd") {
@@ -117,6 +136,9 @@ bool parse_args(int argc, char** argv, Options& opt) {
         std::cerr << "ddasp: no input file\n";
         return false;
     }
+    if (opt.enumerate_limit != 0 && !opt.enumerate) {
+        std::cerr << "ddasp: warning: --limit has no effect without --enumerate\n";
+    }
     return true;
 }
 
@@ -144,24 +166,48 @@ std::string run_gringo(const Options& opt) {
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), pipe)) > 0) text.append(buf, n);
     int status = pclose(pipe);
-    if (status != 0) throw std::runtime_error("grounder failed (exit status " + std::to_string(status) + "): " + cmd);
+    if (status == -1) throw std::runtime_error("cannot wait for grounder: " + cmd);
+    if (WIFSIGNALED(status)) {
+        throw std::runtime_error("grounder killed by signal " + std::to_string(WTERMSIG(status)) + ": " + cmd);
+    }
+    if (WEXITSTATUS(status) != 0) {
+        throw std::runtime_error("grounder failed (exit status " + std::to_string(WEXITSTATUS(status)) + "): " + cmd);
+    }
+    // `python -m clingo --mode=gringo` exits with 0 even when it fails (unreadable file,
+    // syntax error) and prints the reason on stderr only; an empty output is the sign.
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos) {
+        throw std::runtime_error("grounder produced no output (see its messages above): " + cmd);
+    }
     return text;
 }
 
 Program load_program(const Options& opt, std::vector<std::string>& warnings) {
-    bool all_aspif = true;
+    size_t aspif_count = 0;
     for (size_t i = 0; i < opt.inputs.size(); ++i) {
-        if (!ends_with(opt.inputs[i], ".aspif")) all_aspif = false;
+        if (ends_with(opt.inputs[i], ".aspif")) ++aspif_count;
     }
-    if (all_aspif) {
+    if (aspif_count == opt.inputs.size()) {
         if (opt.inputs.size() != 1) throw std::runtime_error("only one aspif file can be given");
         return read_aspif_file(opt.inputs[0], &warnings);
+    }
+    if (aspif_count != 0) {
+        throw std::runtime_error("cannot mix an aspif file with source files (aspif files are read as they are)");
     }
     std::string text = run_gringo(opt);
     return read_aspif_string(text, &warnings);
 }
 
-/** Read an order file (one atom name per line) and map the names to atoms. */
+/** Atom id of a "__atomN" name (0 if the name has another form). */
+Atom parse_unnamed_atom(const std::string& name) {
+    const std::string prefix = "__atom";
+    if (name.compare(0, prefix.size(), prefix) != 0 || name.size() == prefix.size()) return 0;
+    char* end = 0;
+    long v = std::strtol(name.c_str() + prefix.size(), &end, 10);
+    if (*end != '\0' || v <= 0 || v > 0x7fffffffL) return 0;
+    return static_cast<Atom>(v);
+}
+
+/** Read an order file (one atom name or __atomN per line) and map the names to atoms. */
 std::vector<Atom> read_order_file(const std::string& path, const Program& program) {
     std::ifstream in(path.c_str());
     if (!in) throw std::runtime_error("cannot open order file: " + path);
@@ -180,11 +226,12 @@ std::vector<Atom> read_order_file(const std::string& path, const Program& progra
         size_t e = line.find_last_not_of(" \t\r");
         std::string name = line.substr(b, e - b + 1);
         std::map<std::string, Atom>::const_iterator it = by_name.find(name);
-        if (it == by_name.end()) {
+        Atom a = it != by_name.end() ? it->second : parse_unnamed_atom(name);
+        if (a == 0 || (it == by_name.end() && a > program.max_atom())) {
             std::cerr << "ddasp: warning: order file line " << line_no << ": unknown atom '" << name << "'\n";
             continue;
         }
-        order.push_back(it->second);
+        order.push_back(a);
     }
     return order;
 }
@@ -211,10 +258,7 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < warnings.size(); ++i) std::cerr << "ddasp: warning: " << warnings[i] << "\n";
         double t_load = seconds_since(t0);
 
-        if (kyotodd::bddinit(1 << 16) != 0) {
-            std::cerr << "ddasp: KyotoDD initialization failed\n";
-            return 1;
-        }
+        kyotodd::bddinit(1 << 16);  // throws on failure
 
         Clock::time_point t1 = Clock::now();
         CompileOptions copts;
@@ -232,7 +276,7 @@ int main(int argc, char** argv) {
         if (opt.stats) {
             const CompileStats& st = res.stats;
             std::cerr << "rules: " << program.rules().size() << "\n"
-                      << "atoms: " << res.var_to_atom.size() - 1 - st.aux_vars << "\n"
+                      << "atoms: " << st.atoms << "\n"
                       << "shown atoms: " << res.vars.size() << "\n"
                       << "aux vars: " << st.aux_vars << "\n"
                       << "groups: " << st.groups << "\n"
@@ -240,7 +284,7 @@ int main(int argc, char** argv) {
                       << "stable nodes: " << st.stable_nodes << "\n"
                       << "zdd nodes: " << res.zdd.raw_size() << "\n"
                       << "bdd nodes: " << res.bdd.raw_size() << "\n"
-                      << "peak live nodes: " << st.peak_nodes << "\n"
+                      << "peak table nodes: " << st.peak_nodes << "\n"
                       << "load time: " << t_load << " s\n"
                       << "order time: " << st.order_time << " s\n"
                       << "models time: " << st.models_time << " s\n"
@@ -263,15 +307,18 @@ int main(int argc, char** argv) {
         }
 
         if (opt.enumerate) {
-            std::vector<std::vector<kyotodd::bddvar> > sets = res.zdd.enumerate();
-            size_t limit = opt.enumerate_limit ? std::min(opt.enumerate_limit, sets.size()) : sets.size();
-            for (size_t i = 0; i < limit; ++i) {
-                std::vector<Atom> atoms;
-                for (size_t j = 0; j < sets[i].size(); ++j) atoms.push_back(res.var_to_atom[sets[i][j]]);
+            // Streamed from the ZDD: --limit stops early without expanding the family.
+            size_t printed = 0;
+            size_t limit = opt.enumerate_limit;
+            for_each_set(res.zdd, [&](const std::vector<kyotodd::bddvar>& set) -> bool {
+                std::vector<Atom> atoms;  // top level first = variable order
+                for (size_t j = 0; j < set.size(); ++j) atoms.push_back(res.var_to_atom[set[j]]);
                 std::vector<std::string> shown = res.shown_names(atoms);
                 for (size_t j = 0; j < shown.size(); ++j) std::cout << (j ? " " : "") << shown[j];
                 std::cout << "\n";
-            }
+                ++printed;
+                return limit == 0 || printed < limit;
+            });
         }
 
         if (!opt.output.empty()) {
@@ -290,11 +337,24 @@ int main(int argc, char** argv) {
                 Atom a = res.var_to_atom[v];
                 out << v << ' ' << kyotodd::bddlevofvar(v) << ' ' << a << ' ' << res.atom_name(a) << "\n";
             }
+            // Cost functions by level (the table above maps levels to atoms). Costs
+            // refer to the unprojected answer sets, so a weight on a hidden atom
+            // cannot be expressed over the exported DD; such lines are marked.
             for (size_t c = 0; c < res.costs.size(); ++c) {
-                out << "# minimize priority " << res.costs[c].priority << " offset " << res.costs[c].offset;
+                const CostFunction& cf = res.costs[c];
+                std::vector<bool> is_shown(cf.var_weights.size(), false);
+                for (size_t i = 0; i < res.vars.size(); ++i) is_shown[res.vars[i]] = true;
+                size_t hidden = 0;
+                for (size_t v = 1; v < cf.var_weights.size(); ++v) {
+                    if (cf.var_weights[v] != 0 && res.var_to_atom[v] != 0 && !is_shown[v]) ++hidden;
+                }
+                out << "# minimize priority " << cf.priority << " offset " << cf.offset;
                 for (size_t i = 0; i < res.vars.size(); ++i) {
                     kyotodd::bddvar v = res.vars[i];
-                    if (res.costs[c].var_weights[v] != 0) out << ' ' << v << ':' << res.costs[c].var_weights[v];
+                    if (cf.var_weights[v] != 0) out << ' ' << kyotodd::bddlevofvar(v) << ':' << cf.var_weights[v];
+                }
+                if (hidden != 0) {
+                    out << " # incomplete: " << hidden << " hidden atom(s) carry weight (use --all-atoms)";
                 }
                 out << "\n";
             }

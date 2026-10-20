@@ -6,6 +6,7 @@
  * @brief Small decision-diagram helpers built on top of KyotoDD.
  */
 
+#include <functional>
 #include <vector>
 
 #include "bdd.h"
@@ -49,6 +50,14 @@ kyotodd::BDD zdd_to_bdd_over(const kyotodd::ZDD& f, const std::vector<kyotodd::b
  * the recursion limit beyond ~8000 levels; quantify with this set instead.
  */
 kyotodd::BDD variable_set(const std::vector<kyotodd::bddvar>& vars);
+
+/**
+ * @brief Visit the sets of a ZDD one by one without materializing the family.
+ *
+ * Each set is given as its variables from the top level down. The visitor
+ * returns false to stop the enumeration early. Iterative (no recursion).
+ */
+void for_each_set(const kyotodd::ZDD& f, const std::function<bool(const std::vector<kyotodd::bddvar>&)>& visit);
 
 /**
  * @brief Threshold constraint: sum(weights[i] * [terms[i]]) >= bound.

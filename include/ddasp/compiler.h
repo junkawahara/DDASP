@@ -102,13 +102,15 @@ struct CompileStats {
     double project_time;     ///< #show projection and the final ZDD -> BDD conversion
     uint64_t models_nodes;   ///< size of Models(X) (∧ Supported(X) for the Scc method)
     uint64_t stable_nodes;   ///< size of the stable-model BDD over all atoms
-    uint64_t peak_nodes;     ///< largest value of kyotodd::bddused() observed
+    uint64_t peak_nodes;     ///< largest value of kyotodd::bddused() observed (nodes in the table,
+                             ///< including garbage not yet collected)
+    size_t atoms;            ///< number of atoms of the program (one x variable each)
     size_t groups;           ///< number of unfounded-set groups (SCCs) quantified
     size_t aux_vars;         ///< number of auxiliary u variables allocated
 
     CompileStats()
         : order_time(0), models_time(0), supported_time(0), conjoin_time(0), unfounded_time(0), convert_time(0), optimize_time(0),
-          project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), groups(0), aux_vars(0) {}
+          project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), atoms(0), groups(0), aux_vars(0) {}
 };
 
 /**
@@ -178,10 +180,14 @@ struct CompileResult {
     std::vector<std::string> shown_names(const std::vector<Atom>& atoms) const;
 };
 
+/** @brief Largest BDD variable number KyotoDD supports; every atom needs one variable, atoms in loops two. */
+const size_t kMaxBddVariables = 65536;
+
 /**
  * @brief Compile a program into a ZDD (and BDD) of its answer sets.
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
- *         a #minimize weight outside the 32-bit range).
+ *         a #minimize weight outside the 32-bit range, more variables needed than
+ *         kMaxBddVariables).
  */
 CompileResult compile(const Program& program, const CompileOptions& options = CompileOptions());
 

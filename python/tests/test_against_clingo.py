@@ -1,11 +1,12 @@
 """Compare ddasp's answer sets with clingo's enumeration."""
 
+import subprocess
 from pathlib import Path
 
 import kyotodd
 import pytest
 
-from conftest import EXAMPLES, clingo_answer_sets, clingo_optimum, ddasp_answer_sets, run_ddasp
+from conftest import EXAMPLES, GRINGO_CMD, clingo_answer_sets, clingo_optimum, ddasp_answer_sets, run_ddasp
 
 INLINE_PROGRAMS = {
     "fact": "a. #show a/0.",
@@ -146,3 +147,63 @@ def test_exported_zdd_round_trips_through_kyotodd(ddasp_bin, tmp_path):
         names = (level_to_name[kyotodd.to_level(v)] for v in s)
         family.add(frozenset(n for n in names if not n.startswith("__atom")))
     assert family == set(clingo_answer_sets([example]))
+
+
+def test_enumerate_limit_and_order(ddasp_bin, tmp_path):
+    path = tmp_path / "p.lp"
+    path.write_text("{ p(1..10) }. #show p/1.")
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--enumerate", "--limit", "3")
+    assert len(out.splitlines()) == 3
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--enumerate", "--limit", "0")
+    assert len(out.splitlines()) == 1024
+    # Atoms of a line come in variable order (= name order), p(2) before p(10).
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--enumerate")
+    full = [line.split() for line in out.splitlines() if len(line.split()) == 10]
+    assert full == [[f"p({i})" for i in range(1, 11)]]
+    proc = subprocess.run([str(ddasp_bin), "--enumerate", "--limit", "abc", str(path)], capture_output=True, text=True)
+    assert proc.returncode != 0 and "--limit" in proc.stderr
+
+
+def test_grounder_failure_is_reported(ddasp_bin, tmp_path):
+    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, str(tmp_path / "missing.lp")],
+                          capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert "grounder" in proc.stderr
+    aspif = tmp_path / "p.aspif"
+    aspif.write_text("asp 1 0 0\n0\n")
+    proc = subprocess.run([str(ddasp_bin), str(aspif), str(tmp_path / "x.lp")], capture_output=True, text=True)
+    assert proc.returncode != 0 and "mix" in proc.stderr
+
+
+def test_atoms_file_minimize_lines(ddasp_bin, tmp_path):
+    path = tmp_path / "p.lp"
+    path.write_text("{ a; b }. c :- a. #minimize{ 1 : c; 2 : b }. #show a/0. #show b/0.")
+    atoms_file = tmp_path / "atoms.txt"
+    run_ddasp(ddasp_bin, [path], "-q", "--all-atoms", "--atoms", atoms_file)
+    lines = atoms_file.read_text().splitlines()
+    level_of = {name: int(level) for var, level, atom, name in
+                (l.split(maxsplit=3) for l in lines if not l.startswith("#"))}
+    (mini,) = [l for l in lines if l.startswith("# minimize")]
+    assert "incomplete" not in mini
+    weights = dict(tuple(map(int, w.split(":"))) for w in mini.split("offset 0")[1].split())
+    assert weights == {level_of["__atom3"]: 1, level_of["b"]: 2}
+    run_ddasp(ddasp_bin, [path], "-q", "--atoms", atoms_file)
+    (mini,) = [l for l in atoms_file.read_text().splitlines() if l.startswith("# minimize")]
+    assert "incomplete: 1 hidden" in mini
+
+
+def test_order_file_and_bdd_export(ddasp_bin, tmp_path):
+    path = tmp_path / "p.lp"
+    path.write_text("{ p(1..3) }. q :- p(1). #show p/1.")
+    order = tmp_path / "order.txt"
+    order.write_text("# comment\np(3)\n__atom4\nnope\n")
+    atoms_file = tmp_path / "atoms.txt"
+    bdd_file = tmp_path / "out.bdd"
+    _, err = run_ddasp(ddasp_bin, [path], "-q", "--all-atoms", "--order", order, "--atoms", atoms_file,
+                       "-o", bdd_file, "--bdd")
+    assert "unknown atom 'nope'" in err
+    rows = [l.split(maxsplit=3) for l in atoms_file.read_text().splitlines() if not l.startswith("#")]
+    names_top_down = [name for var, level, atom, name in rows]
+    assert names_top_down == ["p(3)", "__atom4", "p(1)", "p(2)"]
+    bdd = kyotodd.BDD.import_binary_str(bdd_file.read_bytes())
+    assert bdd.count(4) == 8  # characteristic function of 8 answer sets over 4 variables

@@ -382,6 +382,7 @@ public:
         res.var_to_atom = var_to_atom_;
         res.atom_to_var = atom_to_var_;
         CompileStats& st = res.stats;
+        st.atoms = order_.size();
         st.groups = groups_.size();
         for (size_t i = 0; i < in_group_.size(); ++i) st.aux_vars += in_group_[i] ? 1 : 0;
 
@@ -459,6 +460,16 @@ private:
         in_group_.assign(max_atom + 1, false);
         for (size_t g = 0; g < groups_.size(); ++g) {
             for (size_t i = 0; i < groups_[g].size(); ++i) in_group_[groups_[g][i]] = true;
+        }
+
+        size_t needed = order_.size();
+        for (size_t i = 0; i < in_group_.size(); ++i) needed += in_group_[i] ? 1 : 0;
+        if (kyotodd::bddvarused() + needed > kMaxBddVariables) {
+            throw std::invalid_argument(
+                "the program needs " + std::to_string(needed) + " BDD variables (" +
+                std::to_string(order_.size()) + " atoms + " + std::to_string(needed - order_.size()) +
+                " auxiliary) but KyotoDD supports at most " + std::to_string(kMaxBddVariables) +
+                " (" + std::to_string(kyotodd::bddvarused()) + " already in use)");
         }
 
         // x variables: allocate bottom-up so that order_[0] ends up at the top level.

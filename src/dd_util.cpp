@@ -182,6 +182,44 @@ BDD zdd_to_bdd_over(const ZDD& f, const std::vector<bddvar>& vars) {
     return ret;
 }
 
+void for_each_set(const ZDD& f, const std::function<bool(const std::vector<bddvar>&)>& visit) {
+    if (f.is_zero()) return;
+    // Depth-first search over the paths to the 1-terminal; a frame is a node and
+    // the edge taken next (0 then 1). `path` holds the variables of the 1-edges.
+    struct Frame {
+        ZDD node;
+        int next_edge;
+    };
+    std::vector<Frame> stack;
+    std::vector<bddvar> path;
+    Frame root = {f, 0};
+    stack.push_back(root);
+    while (!stack.empty()) {
+        Frame& fr = stack.back();
+        if (fr.node.is_terminal()) {
+            if (fr.node.is_one() && !visit(path)) return;
+            stack.pop_back();
+            if (!stack.empty() && stack.back().next_edge == 2) path.pop_back();
+            continue;
+        }
+        if (fr.next_edge == 0) {
+            fr.next_edge = 1;
+            ZDD child = fr.node.child0();
+            Frame next = {child, 0};
+            stack.push_back(next);  // invalidates fr
+        } else if (fr.next_edge == 1) {
+            fr.next_edge = 2;
+            path.push_back(fr.node.top());
+            ZDD child = fr.node.child1();
+            Frame next = {child, 0};
+            stack.push_back(next);  // invalidates fr
+        } else {
+            stack.pop_back();
+            if (!stack.empty() && stack.back().next_edge == 2) path.pop_back();
+        }
+    }
+}
+
 namespace {
 
 struct ThresholdFrame {
