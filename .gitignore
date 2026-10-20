@@ -1,0 +1,10 @@
+build/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+python/build/
+python/_skbuild/
+*.zdd
+*.aspif
+!examples/*.aspif
