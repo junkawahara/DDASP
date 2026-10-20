@@ -56,6 +56,8 @@ def clingo_answer_sets(files, project=False, optimize=False):
         args.append("--project=show")
     if optimize:
         args.append("--opt-mode=optN")
+    else:
+        args.append("--opt-mode=ignore")  # every answer set, whatever its #minimize cost
     ctl = clingo.Control(args)
     for f in files:
         ctl.load(str(f))

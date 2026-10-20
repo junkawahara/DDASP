@@ -361,19 +361,24 @@ col(5,b) col(4,g) col(3,b) col(2,g) col(1,r)
 
 ## 7. 最適化(#minimize)
 
-`#minimize` で解のコストを定義できます。次のプログラムを `opt.lp` として保存してください。
+`#minimize` で解のコストを定義できます。`examples/minimize.lp`:
 
 ```prolog
+% #minimize: at least one of a, b; a costs 1, b costs 2, c costs 1.
 { a ; b ; c }.
-:- not a, not b.                              % a か b の少なくとも一方は必要
-#minimize { 1,a : a ; 2,b : b ; 1,c : c }.    % a のコスト 1, b は 2, c は 1
+:- not a, not b.
+#minimize { 1,a : a ; 2,b : b ; 1,c : c }.
 #show a/0. #show b/0. #show c/0.
 ```
+
+- 制約 `:- not a, not b.` は「a か b の少なくとも一方は真」を表します。
+- `#minimize { 1,a : a ; ... }` は「a が真ならコスト 1、b が真ならコスト 2、c が真ならコスト 1」
+  の合計を最小化する指示です。`重み,識別子 : 条件` の形で書きます。
 
 `--opt` を付けないと、コストに関係なくすべての解が対象です。
 
 ```sh
-./build/ddasp --gringo "$G" --enumerate opt.lp
+./build/ddasp --gringo "$G" --enumerate examples/minimize.lp
 ```
 
 ```
@@ -389,7 +394,7 @@ c b a
 `--opt` を付けると、コストが最小の解だけが残ります。
 
 ```sh
-./build/ddasp --gringo "$G" --opt --enumerate opt.lp
+./build/ddasp --gringo "$G" --opt --enumerate examples/minimize.lp
 ```
 
 ```
@@ -474,7 +479,7 @@ res.levels                    # [2, 1]             DD の上から順のレベ�
 res = ddasp.compile_files(["examples/queens.lp"])
 res.count                     # 4
 
-res = ddasp.compile_files(["opt.lp"], optimize=True)
+res = ddasp.compile_files(["examples/minimize.lp"], optimize=True)
 res.count, res.optimum        # (1, [1])
 ```
 

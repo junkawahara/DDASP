@@ -107,6 +107,15 @@ def test_optimization_matches_clingo(ddasp_bin, tmp_path, name):
     assert optimum == clingo_optimum([path])
 
 
+def test_minimize_example_matches_clingo(ddasp_bin):
+    example = EXAMPLES / "minimize.lp"
+    assert set(ddasp_answer_sets(ddasp_bin, [example], "--opt")) == set(
+        clingo_answer_sets([example], project=True, optimize=True))
+    out, _ = run_ddasp(ddasp_bin, [example], "--opt")
+    assert "optimum: 1" in out
+    assert clingo_optimum([example]) == [1]
+
+
 def test_exported_zdd_round_trips_through_kyotodd(ddasp_bin, tmp_path):
     example = EXAMPLES / "coloring.lp"
     zdd_file = tmp_path / "out.zdd"
