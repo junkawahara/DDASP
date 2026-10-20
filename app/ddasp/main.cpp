@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -56,7 +57,9 @@ void usage(std::ostream& os) {
           "                     becomes a DD variable)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
           "  --method M         stable-model method: scc (default) or twocopy\n"
-          "  --order H          variable order heuristic: name (default) or id\n"
+          "  --order H          variable order heuristic: name (default), id, or a\n"
+          "                     file with one atom name per line (top of the DD first;\n"
+          "                     remaining atoms follow in name order)\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
           "                     `CMD --output=intermediate FILE...`\n"
           "  --stats            print node counts and timings to stderr\n"
@@ -158,6 +161,36 @@ Program load_program(const Options& opt, std::vector<std::string>& warnings) {
     return read_aspif_string(text, &warnings);
 }
 
+/** Read an order file (one atom name per line) and map the names to atoms. */
+std::vector<Atom> read_order_file(const std::string& path, const Program& program) {
+    std::ifstream in(path.c_str());
+    if (!in) throw std::runtime_error("cannot open order file: " + path);
+    std::map<std::string, Atom> by_name;
+    for (size_t o = 0; o < program.outputs().size(); ++o) {
+        const Output& out = program.outputs()[o];
+        if (out.condition.size() == 1 && out.condition[0] > 0 && !by_name.count(out.name)) {
+            by_name[out.name] = out.condition[0];
+        }
+    }
+    std::vector<Atom> order;
+    std::string line;
+    int line_no = 0;
+    while (std::getline(in, line)) {
+        ++line_no;
+        size_t b = line.find_first_not_of(" \t\r");
+        if (b == std::string::npos || line[b] == '#' || line[b] == '%') continue;
+        size_t e = line.find_last_not_of(" \t\r");
+        std::string name = line.substr(b, e - b + 1);
+        std::map<std::string, Atom>::const_iterator it = by_name.find(name);
+        if (it == by_name.end()) {
+            std::cerr << "ddasp: warning: order file line " << line_no << ": unknown atom '" << name << "'\n";
+            continue;
+        }
+        order.push_back(it->second);
+    }
+    return order;
+}
+
 typedef std::chrono::steady_clock Clock;
 
 double seconds_since(Clock::time_point t0) {
@@ -190,7 +223,11 @@ int main(int argc, char** argv) {
         copts.project_to_shown = !opt.all_atoms;
         copts.optimize = opt.optimize;
         copts.method = parse_method(opt.method);
-        copts.order_heuristic = parse_order_heuristic(opt.order);
+        if (opt.order == "name" || opt.order == "id") {
+            copts.order_heuristic = parse_order_heuristic(opt.order);
+        } else {
+            copts.order = read_order_file(opt.order, program);
+        }
         CompileResult res = compile(program, copts);
         double t_compile = seconds_since(t1);
 

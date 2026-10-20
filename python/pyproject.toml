@@ -1,0 +1,17 @@
+[build-system]
+requires = ["scikit-build-core>=0.5", "pybind11>=2.11"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ddasp"
+version = "0.1.0"
+description = "Compile ASP programs into ZDDs/BDDs of their answer sets (KyotoDD based)"
+requires-python = ">=3.8"
+dependencies = ["clingo>=5.5"]
+
+[project.optional-dependencies]
+dd = ["kyotodd"]
+
+[tool.scikit-build]
+cmake.source-dir = "."
+wheel.packages = ["src/ddasp"]
