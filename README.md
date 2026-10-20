@@ -2,7 +2,7 @@
 
 DDASP compiles an ASP (Answer Set Programming) program into a **ZDD** (or BDD)
 that represents the family of *all* its answer sets, using the
-[KyotoDD](../KyotoDD) library. Grounding is delegated to gringo/clingo.
+[KyotoDD](https://github.com/graphillion/kyotodd) library. Grounding is delegated to gringo/clingo.
 
 Supported: normal, choice, constraint and disjunctive rules (including non
 head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection,
@@ -16,7 +16,8 @@ cmake -S . -B build && cmake --build build -j
 ctest --test-dir build            # C++ unit tests (Google Test)
 ```
 
-`KyotoDD` is a symlink to the KyotoDD checkout; it is built as a static
+KyotoDD is a git submodule in `third_party/KyotoDD` (fetch it with
+`git submodule update --init --recursive`); it is built as a static
 library inside this project.
 
 ## Python environment (clingo and the Python packages)
@@ -24,7 +25,7 @@ library inside this project.
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install clingo pytest scikit-build-core pybind11
-.venv/bin/pip install --no-build-isolation -e KyotoDD/python   # kyotodd
+.venv/bin/pip install --no-build-isolation -e third_party/KyotoDD/python   # kyotodd
 .venv/bin/pip install --no-build-isolation -e python           # ddasp
 .venv/bin/pytest                                               # clingo comparison tests
 ```

@@ -10,14 +10,16 @@
 
 ## KyotoDD
 
-- `KyotoDD` in this directory is a **symbolic link** to the KyotoDD library
-  (`../KyotoDD`). Do not copy the library into this repository; always use it via the
-  symlink.
+- KyotoDD is a **git submodule** at `third_party/KyotoDD`
+  (https://github.com/graphillion/kyotodd). Fetch it with
+  `git submodule update --init --recursive` (it has a nested TdZdd submodule). Do not
+  copy the library into this repository; always use it via the submodule.
 - KyotoDD is a C++ BDD/ZDD library with Python bindings (`import kyotodd`).
-  Read `KyotoDD/CLAUDE.md`, `KyotoDD/README.md`, and the headers under
-  `KyotoDD/include/` for API details. Do not duplicate the KyotoDD API in this file.
-- Do not modify files under `KyotoDD/` from this project. If a change to KyotoDD is
-  needed, ask the user first.
+  Read `third_party/KyotoDD/CLAUDE.md`, `third_party/KyotoDD/README.md`, and the
+  headers under `third_party/KyotoDD/include/` for API details. Do not duplicate the
+  KyotoDD API in this file.
+- Do not modify files under `third_party/KyotoDD/` from this project. If a change to
+  KyotoDD is needed, ask the user first.
 
 ## Layout and workflow
 

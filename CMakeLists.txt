@@ -12,10 +12,10 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# KyotoDD (symlink to ../KyotoDD). Only kyotodd_lib is needed; its apps and
+# KyotoDD (git submodule in third_party/). Only kyotodd_lib is needed; its apps and
 # tests are excluded from the default build.
 set(KYOTODD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory(KyotoDD EXCLUDE_FROM_ALL)
+add_subdirectory(third_party/KyotoDD EXCLUDE_FROM_ALL)
 
 add_library(ddasp_lib STATIC
   src/program.cpp
@@ -34,7 +34,7 @@ option(DDASP_BUILD_TESTS "Build tests (GoogleTest via FetchContent)" ON)
 if(DDASP_BUILD_TESTS)
   include(FetchContent)
   # Reuse the checkout made by KyotoDD's build if present (avoids a download).
-  set(_kyotodd_gtest_src "${CMAKE_CURRENT_SOURCE_DIR}/KyotoDD/build/_deps/googletest-src")
+  set(_kyotodd_gtest_src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/KyotoDD/build/_deps/googletest-src")
   if(EXISTS "${_kyotodd_gtest_src}/CMakeLists.txt" AND NOT FETCHCONTENT_SOURCE_DIR_GOOGLETEST)
     set(FETCHCONTENT_SOURCE_DIR_GOOGLETEST "${_kyotodd_gtest_src}" CACHE PATH "" FORCE)
   endif()

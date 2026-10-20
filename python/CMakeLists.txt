@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(pybind11 REQUIRED)
 
 set(DDASP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Path to the DDASP root directory")
-set(KYOTODD_ROOT "${DDASP_ROOT}/KyotoDD" CACHE PATH "Path to the KyotoDD root directory")
+set(KYOTODD_ROOT "${DDASP_ROOT}/third_party/KyotoDD" CACHE PATH "Path to the KyotoDD root directory")
 
 # The extension carries its own copy of KyotoDD (a separate node table from the
 # kyotodd Python module); results cross over as export_binary bytes.
