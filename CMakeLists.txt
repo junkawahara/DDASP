@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
 project(DDASP CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -17,6 +20,8 @@ add_subdirectory(KyotoDD EXCLUDE_FROM_ALL)
 add_library(ddasp_lib STATIC
   src/program.cpp
   src/aspif_reader.cpp
+  src/dd_util.cpp
+  src/compiler.cpp
 )
 target_include_directories(ddasp_lib PUBLIC include)
 target_link_libraries(ddasp_lib PUBLIC kyotodd_lib)
@@ -50,4 +55,10 @@ if(DDASP_BUILD_TESTS)
   add_executable(aspif_reader_test test/test_aspif_reader.cpp)
   target_link_libraries(aspif_reader_test ddasp_lib GTest::gtest_main)
   add_test(NAME aspif_reader_test COMMAND aspif_reader_test)
+endif()
+
+if(DDASP_BUILD_TESTS)
+  add_executable(compiler_test test/test_compiler.cpp)
+  target_link_libraries(compiler_test ddasp_lib GTest::gtest_main)
+  add_test(NAME compiler_test COMMAND compiler_test)
 endif()
