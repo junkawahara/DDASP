@@ -489,3 +489,26 @@ TEST(Compiler, NaturalNameOrderPlacesUnnamedAtomsNearNeighbours) {
     EXPECT_EQ(res.atom_to_var[5], res.vars[4]);
     EXPECT_EQ(16u, res.zdd.card());
 }
+
+TEST(DdUtil, DeepConversionsDoNotRecurse) {
+    // One variable per level over tens of thousands of levels: a recursive
+    // conversion would overflow the default stack.
+    const size_t n = 60000;
+    std::vector<bddvar> vars;
+    for (size_t i = 0; i < n; ++i) vars.push_back(kyotodd::bddnewvar());  // variable i+1 at level i+1
+    BDD all = BDD::True;  // x_1 ∧ ... ∧ x_n, built from the bottom level (1) up
+    for (size_t i = 0; i < n; ++i) all = BDD::prime(vars[i]) & all;
+    ZDD z = bdd_to_zdd_over(all, vars);
+    EXPECT_EQ("1", z.exact_count().to_string());  // (ZDD::card() itself recurses per level)
+    EXPECT_EQ(all, zdd_to_bdd_over(z, vars));
+
+    std::vector<BDD> terms;
+    std::vector<long long> weights(n, 1);
+    for (size_t i = 0; i < n; ++i) terms.push_back(BDD::prime(vars[i]));
+    BDD at_least_all = threshold_bdd(terms, weights, static_cast<long long>(n));
+    EXPECT_EQ(all, at_least_all);
+    std::reverse(terms.begin(), terms.end());  // bottom level first: threshold_bdd sorts the terms itself
+    std::reverse(weights.begin(), weights.end());
+    BDD at_most_one_missing = threshold_bdd(terms, weights, static_cast<long long>(n) - 1);
+    EXPECT_EQ(std::to_string(n + 1), bdd_to_zdd_over(at_most_one_missing, vars).exact_count().to_string());
+}
