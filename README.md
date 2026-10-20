@@ -5,9 +5,11 @@ that represents the family of *all* its answer sets, using the
 [KyotoDD](https://github.com/graphillion/kyotodd) library. Grounding is delegated to gringo/clingo.
 
 Supported: normal, choice, constraint and disjunctive rules (including non
-head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection,
-`#minimize` (optimal answer sets only, or cost functions), `#external` atoms
-(kept as free variables).
+head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection
+(including `#show t : not a.` style terms), `#minimize` (optimal answer sets
+only, or cost functions), `#external` atoms (kept as free variables; their
+initial value is ignored). `#project`, `#heuristic`, assumptions, edges and
+theory atoms are ignored with a warning.
 
 **New to ASP or DDASP?** Read the beginner's guide (Japanese):
 [docs/GUIDE_ja.md](docs/GUIDE_ja.md) — 初心者向け利用ガイド(ASP の基本文法から ZDD の活用まで)。
@@ -47,14 +49,21 @@ G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp prog.aspif                                        # already ground
 ```
 
-Options: `--count`, `--enumerate [--limit N]`, `-o FILE` (KyotoDD binary;
-`--bdd` for the BDD), `--atoms FILE` (variable / level / atom / name table),
-`--all-atoms` (no `#show` projection), `--opt` (`#minimize`),
-`--method scc|twocopy`, `--order name|id|FILE`, `--stats`, `-q`.
+Options: `--enumerate [--limit N]` (streamed; `0` = all), `-o FILE` (KyotoDD
+binary; `--bdd` for the BDD), `--atoms FILE` (variable / level / atom / name
+table plus the `#minimize` cost functions by level), `--all-atoms` (no `#show`
+projection), `--opt` (`#minimize`), `--method scc|twocopy`,
+`--order name|id|FILE`, `--stats`. The summary lines `answer sets: N` and
+`optimum: ...` are printed by default; `-q` suppresses them and `-q --count`
+prints the bare count.
 
 The binary format records DD *levels*; the `--atoms` table lists the level of
 every atom. Importing the file in a fresh KyotoDD process gives variable
 number = level.
+
+Limits: KyotoDD allows 65536 BDD variables (one per atom of the ground
+program, two for atoms in positive loops), and the node table is unbounded,
+so very large intermediate diagrams use all available memory.
 
 ## Python
 

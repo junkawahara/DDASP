@@ -22,27 +22,23 @@ prog.lp --gringo--> aspif text --AspifReader--> Program --Compiler--> BDD --> ZD
 - `Minimize { priority, [(literal, weight)] }`, `Output { name, condition }`,
   `externals` (atoms that have no defining rule and are left free).
 
-## Stable model semantics: two-copy method (reference implementation)
+## Stable model semantics: two-copy method (reference implementation, `--method twocopy`)
 
-For every atom `a_i` the compiler allocates two BDD variables: `x_i` (candidate set X)
-and `y_i` (subset Y). The levels interleave `x_i, y_i` so that `Y ⊆ X` stays small.
-
-```
-Stable(X) = Models(X) ∧ ¬∃Y [ Y ⊆ X ∧ Y ≠ X ∧ Y ⊨ P^X ]
-```
+Models(X) ∧ "X has no non-empty unfounded set" with a single group that
+contains every atom: one auxiliary variable `u_a` per atom (placed directly
+above `x_a`), one quantification over all of them. It is the same code path as
+the SCC method below with a single group, kept as the reference to compare
+against. (The original plan, a second copy `y_i` of every atom with
+`Y ⊨ P^X`, was replaced by the unfounded-set formulation before the first
+release; `u_a` plays the role of `a ∈ X \ Y`.)
 
 - `Models(X)`: every rule satisfies `body(X) → head(X)`; choice rules are always true.
-- `Y ⊨ P^X` (Y is a model of the reduct of P under X), per rule `H :- B+, not B-`:
-  - disjunctive head: `(B- ∩ X = ∅) ∧ (B+ ⊆ Y) → (H ∩ Y ≠ ∅)`
-  - choice head, for each `a ∈ H`: `(B- ∩ X = ∅) ∧ (B+ ⊆ Y) ∧ (a ∈ X) → (a ∈ Y)`
-  - weight body: `Σ_pos w·[a ∈ Y] + Σ_neg w·[b ∉ X] ≥ bound`, built by dynamic
-    programming over the literal list (threshold BDD).
-- `#external a` is treated as the choice rule `{a}.`
-- Finally the Y variables are existentially quantified and the BDD is converted to a ZDD
-  over the atom variables.
-
-This handles normal, choice, constraint, disjunctive (including non-HCF) rules and
-weight bodies uniformly, at the cost of doubling the number of BDD variables.
+- Weight bodies `Σ w·[lit] ≥ bound` are threshold BDDs built by dynamic
+  programming over the literal list (`threshold_bdd`), processing the
+  literals from the top level down.
+- `#external a` is treated as the choice rule `{a}.`; its initial value
+  (true/false/free/release) is ignored, the atom is always free.
+- `#project` statements are read but ignored.
 
 ## Stable model semantics: SCC-local unfounded sets (default, `--method scc`)
 
@@ -84,12 +80,24 @@ enumeration.
 
 ## #show projection (default on)
 
-Atoms named by a `#show` output statement whose condition is a single positive
-atom are "shown". Output statements with an empty condition (how gringo emits
-facts) are names printed with every answer set. With projection, the hidden
-atoms are removed from the family with `ZDD::project`, so answer sets that
-differ only in hidden atoms collapse. `--all-atoms` keeps every atom as a DD
-variable. A `#show` with a compound condition is an error while projecting.
+The outputs of the ground program are split into
+
+- *fact names*: outputs with an empty condition (how gringo emits facts),
+  printed with every answer set;
+- the *primary name* of an atom: the first output whose condition is exactly
+  that atom (positive); it names the DD variable (`--atoms`, order files);
+- *terms* (`CompileResult::terms`): every other output, e.g. a second name of
+  an atom (`#show t : a.` when `a` is shown) or a negated condition
+  (`#show t : not a.`). A term is printed when all literals of its condition
+  hold. gringo rewrites compound conditions (`#show t : a, b.`) into an
+  auxiliary atom, so conditions are single literals in practice.
+
+The *shown atoms* are the named atoms plus the atoms of term conditions. With
+projection, the hidden atoms are removed from the family with `ZDD::project`,
+so answer sets that differ only in hidden atoms collapse, and the terms can
+still be evaluated on the projected sets. `CompileResult::shown_names()`
+produces the printed names of one answer set (deduplicated, like clingo's
+symbol set). `--all-atoms` keeps every atom as a DD variable.
 
 ## #minimize
 
@@ -99,14 +107,32 @@ offset +w and weight −w on a). Costs are computed before projection. With
 `--opt`, levels are processed from the most important priority down, each time
 keeping the sets with `cost == min_weight` via `cost_bound_le`.
 
-## Conversions
+## Conversions and deep diagrams
 
 KyotoDD's `BDD::to_zdd` / `ZDD::to_bdd` work on levels, and the binary export
-format records levels too. Because the y variables are interleaved with the x
-variables, DDASP has its own `bdd_to_zdd_over` / `zdd_to_bdd_over`
+format records levels too. Because the `u` variables are interleaved with the
+`x` variables, DDASP has its own `bdd_to_zdd_over` / `zdd_to_bdd_over`
 (`include/ddasp/dd_util.h`) that convert over an explicit variable set. The
 `--atoms` table therefore lists the level of each atom: after importing the
 binary file in a fresh process, variable numbers equal levels.
+
+Programs with tens of thousands of atoms give diagrams with as many levels.
+DDASP's own traversals (`dd_util`: conversions, threshold builder, set
+enumeration) use explicit stacks. KyotoDD switches to iterative
+implementations above 8192 levels for most operations; DDASP quantifies with
+a variable-set BDD (`variable_set`) because `BDD::exist(std::vector)` always
+takes the recursive path, and avoids `ZDD::card()` (recursive) in favour of
+`exact_count()`.
+
+## Limits
+
+- KyotoDD supports at most 65536 BDD variables. Every atom of the ground
+  program needs one (also with `#show` projection, which happens after the
+  stable models are built) and every atom in a non-trivial SCC needs a
+  second one; the compiler reports a clear error beyond that.
+- There is no node limit: `bddinit` is called with an unbounded table, so a
+  huge intermediate BDD (e.g. a `#count` over 60000 atoms with a bound of
+  30000, O(n·k) nodes) uses all the memory of the machine.
 
 ## Decisions log
 
@@ -125,3 +151,6 @@ binary file in a fresh process, variable numbers equal levels.
   scheme cannot decide symbolically when all remaining models are stable.
 - 2026-10-20: default variable order = natural name order with barycenter placement of
   unnamed atoms; constraints are conjoined in order of their top level.
+- 2026-10-20 (review round 1): every `#show` output is honoured (extra names, negated
+  conditions) by keeping the condition atoms as shown atoms; all DDASP traversals are
+  non-recursive; `--enumerate` streams from the ZDD.
