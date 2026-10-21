@@ -63,8 +63,13 @@ def test_inline_program_projection_matches_clingo(ddasp_bin, inline_program, met
     assert set(projected) == set(clingo_answer_sets([inline_program], project=True))
 
 
+# Second steps on a stored DD (tested in test_stored_dd.py); alone they mean nothing.
+SECOND_STEPS = {"coloring_fix.lp", "independent_set_maximal.lp", "shift.lp"}
+STANDALONE_EXAMPLES = sorted(p for p in EXAMPLES.glob("*.lp") if p.name not in SECOND_STEPS)
+
+
 @pytest.mark.parametrize("method", METHODS)
-@pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.lp")), ids=lambda p: p.stem)
+@pytest.mark.parametrize("example", STANDALONE_EXAMPLES, ids=lambda p: p.stem)
 def test_example_matches_clingo(ddasp_bin, example, method):
     got = ddasp_answer_sets(ddasp_bin, [example], "--all-atoms", "--method", method)
     assert got == clingo_answer_sets([example])
@@ -112,7 +117,7 @@ def test_optimization_matches_clingo(ddasp_bin, tmp_path, name):
     assert optimum == clingo_optimum([path])
 
 
-OPT_EXAMPLES = sorted(p for p in EXAMPLES.glob("*.lp") if "#minimize" in p.read_text())
+OPT_EXAMPLES = [p for p in STANDALONE_EXAMPLES if "#minimize" in p.read_text()]
 
 
 @pytest.mark.parametrize("example", OPT_EXAMPLES, ids=lambda p: p.stem)
