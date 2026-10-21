@@ -119,10 +119,9 @@ binary file in a fresh process, variable numbers equal levels.
 Programs with tens of thousands of atoms give diagrams with as many levels.
 DDASP's own traversals (`dd_util`: conversions, threshold builder, set
 enumeration) use explicit stacks. KyotoDD switches to iterative
-implementations above 8192 levels for most operations; DDASP quantifies with
-a variable-set BDD (`variable_set`) because `BDD::exist(std::vector)` always
-takes the recursive path, and avoids `ZDD::card()` (recursive) in favour of
-`exact_count()`.
+implementations above 8192 levels (KyotoDD a4d60be or later is required: older
+versions quantified `BDD::exist(std::vector)` recursively). DDASP avoids
+`ZDD::card()` (recursive only) in favour of `exact_count()`.
 
 ## Stored DDs (`--save` / `--load`)
 

@@ -705,7 +705,7 @@ private:
         }
         parts.push_back(nonempty);
         BDD f = conjoin_sorted(parts);
-        return f.exist(variable_set(uvars));
+        return f.exist(uvars);
     }
 
     /** Linear cost functions of the #minimize statements, most important priority first. */

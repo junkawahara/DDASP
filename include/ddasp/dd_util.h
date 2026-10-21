@@ -58,16 +58,6 @@ kyotodd::BDD zdd_to_bdd_over(const kyotodd::ZDD& f, const std::vector<kyotodd::b
 kyotodd::ZDD rename_zdd(const kyotodd::ZDD& f, const std::vector<kyotodd::bddvar>& from,
                         const std::vector<kyotodd::bddvar>& to);
 
-/**
- * @brief Variable-set BDD of the given variables, in the encoding that
- * BDD::support() returns and BDD::exist(const BDD&) expects (a chain whose
- * 1-edges all lead to the true terminal).
- *
- * BDD::exist(cube) dispatches to KyotoDD's iterative implementation for deep
- * diagrams, whereas BDD::exist(std::vector<bddvar>) always recurses and hits
- * the recursion limit beyond ~8000 levels; quantify with this set instead.
- */
-kyotodd::BDD variable_set(const std::vector<kyotodd::bddvar>& vars);
 
 /**
  * @brief Visit the sets of a ZDD one by one without materializing the family.

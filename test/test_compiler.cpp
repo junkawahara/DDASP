@@ -590,14 +590,3 @@ TEST(DdUtil, RenameZddTerminalsAndErrors) {
     EXPECT_THROW(rename_zdd(z, V(a, a, c), V(a, b, c)), std::invalid_argument);                 // source twice
     EXPECT_THROW(rename_zdd(z, std::vector<bddvar>(1, a), std::vector<bddvar>(1, b)), std::invalid_argument);
 }
-
-TEST(DdUtil, VariableSetQuantifiesLikeTheVectorForm) {
-    bddvar a = kyotodd::bddnewvar(), b = kyotodd::bddnewvar(), c = kyotodd::bddnewvar();
-    std::vector<bddvar> vars;
-    vars.push_back(c);
-    vars.push_back(a);
-    vars.push_back(a);
-    BDD f = (BDD::prime(a) & BDD::prime(b)) | (~BDD::prime(b) & BDD::prime(c));
-    EXPECT_EQ(f.exist(vars), f.exist(variable_set(vars)));
-    EXPECT_EQ(f, f.exist(variable_set(std::vector<bddvar>())));
-}
