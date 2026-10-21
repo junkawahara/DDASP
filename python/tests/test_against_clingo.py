@@ -32,6 +32,8 @@ INLINE_PROGRAMS = {
     "negated_show": "{ a }. #show t : not a.",
     "shared_name": "{ a; b }. #show t : a. #show t : b.",
     "shown_fact_term": "c. #show c/0. #show w : c.",
+    "disjunction_clasp_eq": "e | c | d :- e. 2 { f; e } 2 :- a. b | f :- not d, a. 2 { a; d; c } 2. { f; e; c } :- c. "
+                            "#show a/0. #show b/0. #show c/0. #show d/0. #show e/0. #show f/0.",
     "graph_reachability": """
         edge(1,2). edge(2,3). edge(3,1). edge(3,4).
         { on(X,Y) : edge(X,Y) }.

@@ -5,8 +5,8 @@ import pytest
 ddasp = pytest.importorskip("ddasp")
 kyotodd = pytest.importorskip("kyotodd")
 
-from conftest import EXAMPLES, clingo_answer_sets, clingo_optimum  # noqa: E402
-from test_against_clingo import INLINE_PROGRAMS, OPT_PROGRAMS  # noqa: E402
+from conftest import clingo_answer_sets, clingo_optimum  # noqa: E402
+from test_against_clingo import INLINE_PROGRAMS, OPT_PROGRAMS, STANDALONE_EXAMPLES  # noqa: E402
 
 
 def _write(tmp_path, name, programs=INLINE_PROGRAMS):
@@ -27,7 +27,7 @@ def test_compile_text_matches_clingo(tmp_path, name, method):
     assert projected.zdd.exact_count == projected.count
 
 
-@pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.lp")), ids=lambda p: p.stem)
+@pytest.mark.parametrize("example", STANDALONE_EXAMPLES, ids=lambda p: p.stem)
 def test_compile_files_matches_clingo(example):
     res = ddasp.compile_files([example])
     assert set(res.answer_sets()) == set(clingo_answer_sets([example], project=True))

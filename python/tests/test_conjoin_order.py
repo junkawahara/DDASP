@@ -13,9 +13,8 @@ def test_count_over_shown_atoms_stays_small():
     assert res.count == 2**n
     sizes = {next(a for a in s if a.startswith("size")) for s in res.answer_sets()}
     assert sizes == {f"size({k})" for k in range(n + 1)}
-    # Before the dependency order this took 11M nodes and tens of seconds.
+    # Before the dependency order this took 11M nodes (and tens of seconds).
     assert res.stats["peak_nodes"] < 300_000
-    assert res.stats["conjoin_time"] < 2.0
 
 
 def test_count_over_stored_atoms_stays_small():

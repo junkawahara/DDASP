@@ -51,7 +51,11 @@ def clingo_answer_sets(files, project=False, optimize=False):
     answer sets are projected onto the shown atoms (distinct projections);
     with ``optimize`` only optimal answer sets are kept.
     """
-    args = ["0"]
+    # --eq=0: clasp's equivalence preprocessing (default --eq=5) returns an
+    # unsupported model for some disjunctive programs, e.g.
+    # `e | c | d :- e. 2 { f; e } 2 :- a. b | f :- not d, a. 2 { a; d; c } 2. { f; e; c } :- c.`
+    # ({b, c, d}, the only rule for b having a false body); without it clingo agrees with ddasp.
+    args = ["0", "--eq=0"]
     if project:
         args.append("--project=show")
     if optimize:
@@ -72,7 +76,9 @@ def clingo_answer_sets(files, project=False, optimize=False):
             ctl.assign_external(sym, bool(mask >> i & 1))
         with ctl.solve(yield_=True) as handle:
             for model in handle:
-                if optimize and not model.optimality_proven:
+                # Without a #minimize statement (e.g. one that grounds to nothing)
+                # every model is optimal, but optimality_proven is never set.
+                if optimize and model.cost and not model.optimality_proven:
                     continue
                 result[frozenset(str(s) for s in model.symbols(shown=True))] += 1
     return result
@@ -80,7 +86,7 @@ def clingo_answer_sets(files, project=False, optimize=False):
 
 def clingo_optimum(files):
     """Optimal cost vector reported by clingo (None if the program is inconsistent)."""
-    ctl = clingo.Control(["0", "--opt-mode=optN"])
+    ctl = clingo.Control(["0", "--opt-mode=optN", "--eq=0"])
     for f in files:
         ctl.load(str(f))
     ctl.ground([("base", [])])

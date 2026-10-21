@@ -306,6 +306,20 @@ def test_python_and_cli_files_interoperate(tmp_path, ddasp_bin):
 # --- DDs built directly with KyotoDD -----------------------------------------
 
 
+def _fresh_kyotodd():
+    """Re-initialize the kyotodd instance (variables from level 1 again).
+
+    Diagrams of earlier tests may still be alive until the garbage collector
+    runs, and kyotodd.init() refuses to run while objects exist.
+    """
+    import gc
+
+    import kyotodd
+
+    gc.collect()
+    kyotodd.init()
+
+
 def _work_patterns():
     """The family of examples/shift_dd.py as (kyotodd.ZDD, {var: name}) and as Python sets."""
     import itertools
@@ -313,7 +327,7 @@ def _work_patterns():
     import kyotodd
 
     days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-    kyotodd.init()
+    _fresh_kyotodd()
     var = dict(zip(days, kyotodd.new_vars(len(days))))
     family = kyotodd.ZDD.power_set(len(days)).size_le(4)
     for i in range(len(days) - 2):
@@ -347,7 +361,7 @@ def test_from_zdd_stores_a_hand_built_family():
 def test_from_zdd_names_as_a_list_facts_and_terminal_families():
     import kyotodd
 
-    kyotodd.init()
+    _fresh_kyotodd()
     kyotodd.new_vars(3)
     z = kyotodd.ZDD.from_sets([[1, 2], [3]])  # variables 1, 2, 3 are a, b, c
     dd = ddasp.StoredDD.from_zdd(z, ["a", "b", "c"], fact_names=["f"])
@@ -368,7 +382,7 @@ def test_from_zdd_names_as_a_list_facts_and_terminal_families():
 def test_from_zdd_rejects_bad_input():
     import kyotodd
 
-    kyotodd.init()
+    _fresh_kyotodd()
     kyotodd.new_vars(3)
     z = kyotodd.ZDD.from_sets([[1, 2], [3]])
     with pytest.raises(ValueError, match="no name"):

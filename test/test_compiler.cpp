@@ -536,7 +536,12 @@ TEST(Compiler, NaturalNameOrderPlacesUnnamedAtomsNearNeighbours) {
 
 TEST(DdUtil, DeepConversionsDoNotRecurse) {
     // One variable per level over tens of thousands of levels: a recursive
-    // conversion would overflow the default stack.
+    // conversion would overflow the default stack. The variables are allocated
+    // in a fresh KyotoDD instance, and the usual one is restored afterwards
+    // (65536 variables is the cap; later tests must not inherit these).
+    kyotodd::bddfinal();
+    kyotodd::bddinit(1024);
+    {
     const size_t n = 60000;
     std::vector<bddvar> vars;
     for (size_t i = 0; i < n; ++i) vars.push_back(kyotodd::bddnewvar());  // variable i+1 at level i+1
@@ -566,6 +571,10 @@ TEST(DdUtil, DeepConversionsDoNotRecurse) {
     std::vector<bddvar> head(vars.begin(), vars.begin() + m), reversed(head.rbegin(), head.rend());
     ZDD short_chain = ZDD::from_sets(std::vector<std::vector<bddvar> >(1, head));
     EXPECT_EQ(short_chain, rename_zdd(short_chain, head, reversed));  // a permutation of the same set
+    }
+    kyotodd::bddfinal();
+    kyotodd::bddinit(1024);
+    EXPECT_EQ(0u, kyotodd::bddvarused());
 }
 
 namespace {
