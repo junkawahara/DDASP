@@ -4,6 +4,7 @@
  */
 
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -14,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -22,6 +24,7 @@
 #include "ddasp/aspif_reader.h"
 #include "ddasp/compiler.h"
 #include "ddasp/dd_util.h"
+#include "ddasp/stored_dd.h"
 
 using namespace ddasp;
 
@@ -32,6 +35,8 @@ struct Options {
     std::string gringo = "gringo";
     std::string output;       // -o
     std::string atoms_file;   // --atoms
+    std::string save_file;    // --save
+    std::vector<std::string> load_files;  // --load
     bool count = false;
     bool enumerate = false;
     bool stats = false;
@@ -64,6 +69,12 @@ void usage(std::ostream& os) {
           "  --bdd              write a BDD instead of a ZDD with -o\n"
           "  --atoms FILE       write the variable/level/atom/name table to FILE, followed\n"
           "                     by one `# minimize` line per priority (level:weight)\n"
+          "  --save FILE        write the answer sets as a stored DD (ZDD + atom names)\n"
+          "                     to FILE, for --load in a later run\n"
+          "  --load FILE        load a stored DD: its atoms become #external atoms of\n"
+          "                     the program (declared automatically, except for aspif\n"
+          "                     input) and the answer sets are restricted to its sets;\n"
+          "                     may be repeated\n"
           "  --all-atoms        do not project onto the shown atoms (every atom\n"
           "                     becomes a DD variable)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
@@ -119,6 +130,10 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.order = need_value("--order");
         } else if (a == "--atoms") {
             opt.atoms_file = need_value("--atoms");
+        } else if (a == "--save") {
+            opt.save_file = need_value("--save");
+        } else if (a == "--load") {
+            opt.load_files.push_back(need_value("--load"));
         } else if (a == "--gringo") {
             opt.gringo = need_value("--gringo");
         } else if (a == "--stats") {
@@ -155,10 +170,43 @@ std::string shell_quote(const std::string& s) {
     return q + "'";
 }
 
-/** Run the grounder on the input files and return the aspif text. */
-std::string run_gringo(const Options& opt) {
+/** A temporary file holding generated program text; removed on destruction. */
+struct TempProgram {
+    std::string path;
+    explicit TempProgram(const std::string& text) {
+        const char* dir = std::getenv("TMPDIR");
+        std::string tmpl = std::string(dir && *dir ? dir : "/tmp") + "/ddasp-load-XXXXXX";
+        std::vector<char> buf(tmpl.begin(), tmpl.end());
+        buf.push_back('\0');
+        int fd = mkstemp(&buf[0]);
+        if (fd == -1) throw std::runtime_error("cannot create a temporary file in " + tmpl);
+        path = &buf[0];
+        size_t done = 0;
+        while (done < text.size()) {
+            ssize_t n = write(fd, text.data() + done, text.size() - done);
+            if (n <= 0) {
+                close(fd);
+                throw std::runtime_error("cannot write the temporary file " + path);
+            }
+            done += static_cast<size_t>(n);
+        }
+        close(fd);
+    }
+    ~TempProgram() { unlink(path.c_str()); }
+};
+
+/**
+ * Run the grounder on the input files (plus the declarations of the loaded DDs,
+ * when there are any) and return the aspif text.
+ */
+std::string run_gringo(const Options& opt, const std::string& declarations) {
     std::string cmd = opt.gringo + " --output=intermediate";
     for (size_t i = 0; i < opt.inputs.size(); ++i) cmd += " " + shell_quote(opt.inputs[i]);
+    std::unique_ptr<TempProgram> extra;
+    if (!declarations.empty()) {
+        extra.reset(new TempProgram(declarations));
+        cmd += " " + shell_quote(extra->path);
+    }
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) throw std::runtime_error("cannot run grounder: " + cmd);
     std::string text;
@@ -176,12 +224,13 @@ std::string run_gringo(const Options& opt) {
     // `python -m clingo --mode=gringo` exits with 0 even when it fails (unreadable file,
     // syntax error) and prints the reason on stderr only; an empty output is the sign.
     if (text.find_first_not_of(" \t\r\n") == std::string::npos) {
-        throw std::runtime_error("grounder produced no output (see its messages above): " + cmd);
+        std::string hint = extra ? " (the last input file declares the atoms of the loaded DDs)" : "";
+        throw std::runtime_error("grounder produced no output (see its messages above)" + hint + ": " + cmd);
     }
     return text;
 }
 
-Program load_program(const Options& opt, std::vector<std::string>& warnings) {
+Program load_program(const Options& opt, const std::string& declarations, std::vector<std::string>& warnings) {
     size_t aspif_count = 0;
     for (size_t i = 0; i < opt.inputs.size(); ++i) {
         if (ends_with(opt.inputs[i], ".aspif")) ++aspif_count;
@@ -193,7 +242,7 @@ Program load_program(const Options& opt, std::vector<std::string>& warnings) {
     if (aspif_count != 0) {
         throw std::runtime_error("cannot mix an aspif file with source files (aspif files are read as they are)");
     }
-    std::string text = run_gringo(opt);
+    std::string text = run_gringo(opt, declarations);
     return read_aspif_string(text, &warnings);
 }
 
@@ -253,12 +302,32 @@ int main(int argc, char** argv) {
 
     try {
         Clock::time_point t0 = Clock::now();
+        std::vector<StoredDDData> stored;
+        std::string declarations;
+        for (size_t i = 0; i < opt.load_files.size(); ++i) {
+            std::ifstream in(opt.load_files[i].c_str(), std::ios::binary);
+            if (!in) throw std::runtime_error("cannot open stored DD file: " + opt.load_files[i]);
+            try {
+                stored.push_back(read_stored_dd(in));
+            } catch (const std::exception& e) {
+                throw std::runtime_error(opt.load_files[i] + ": " + e.what());
+            }
+            declarations += stored_dd_declarations(stored.back());
+        }
         std::vector<std::string> warnings;
-        Program program = load_program(opt, warnings);
+        Program program = load_program(opt, declarations, warnings);
         for (size_t i = 0; i < warnings.size(); ++i) std::cerr << "ddasp: warning: " << warnings[i] << "\n";
         double t_load = seconds_since(t0);
 
         kyotodd::bddinit(1 << 16);  // throws on failure
+        std::vector<LoadedDD> loaded;
+        for (size_t i = 0; i < stored.size(); ++i) {
+            try {
+                loaded.push_back(import_stored_dd(stored[i]));
+            } catch (const std::exception& e) {
+                throw std::runtime_error(opt.load_files[i] + ": " + e.what());
+            }
+        }
 
         Clock::time_point t1 = Clock::now();
         CompileOptions copts;
@@ -270,7 +339,7 @@ int main(int argc, char** argv) {
         } else {
             copts.order = read_order_file(opt.order, program);
         }
-        CompileResult res = compile(program, copts);
+        CompileResult res = compile(program, copts, loaded);
         double t_compile = seconds_since(t1);
 
         if (opt.stats) {
@@ -284,11 +353,16 @@ int main(int argc, char** argv) {
                       << "stable nodes: " << st.stable_nodes << "\n"
                       << "zdd nodes: " << res.zdd.raw_size() << "\n"
                       << "bdd nodes: " << res.bdd.raw_size() << "\n"
-                      << "peak table nodes: " << st.peak_nodes << "\n"
-                      << "load time: " << t_load << " s\n"
+                      << "peak table nodes: " << st.peak_nodes << "\n";
+            if (!loaded.empty()) {
+                std::cerr << "loaded dds: " << st.loaded_dds << "\n"
+                          << "synthesized atoms: " << st.synthesized_atoms << "\n";
+            }
+            std::cerr << "load time: " << t_load << " s\n"
                       << "order time: " << st.order_time << " s\n"
                       << "models time: " << st.models_time << " s\n"
                       << "supported time: " << st.supported_time << " s\n"
+                      << "loaded dd time: " << st.load_time << " s\n"
                       << "conjoin time: " << st.conjoin_time << " s\n"
                       << "unfounded time: " << st.unfounded_time << " s\n"
                       << "convert time: " << st.convert_time << " s\n"
@@ -358,6 +432,14 @@ int main(int argc, char** argv) {
                 }
                 out << "\n";
             }
+        }
+
+        if (!opt.save_file.empty()) {
+            std::ofstream out(opt.save_file.c_str(), std::ios::binary);
+            if (!out) throw std::runtime_error("cannot open stored DD file for writing: " + opt.save_file);
+            std::vector<std::string> save_warnings;
+            write_stored_dd(out, res, &save_warnings);
+            for (size_t i = 0; i < save_warnings.size(); ++i) std::cerr << "ddasp: warning: " << save_warnings[i] << "\n";
         }
         return 0;
     } catch (const std::exception& e) {
