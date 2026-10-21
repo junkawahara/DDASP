@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -256,15 +257,21 @@ Atom parse_unnamed_atom(const std::string& name) {
     return static_cast<Atom>(v);
 }
 
-/** Read an order file (one atom name or __atomN per line) and map the names to atoms. */
+/**
+ * Read an order file (one atom name or __atomN per line) and map the names to
+ * atoms. Every #show name of a single atom counts (`#show t : a.` as well as
+ * the primary name); a name shown for several atoms is ambiguous and skipped.
+ */
 std::vector<Atom> read_order_file(const std::string& path, const Program& program) {
     std::ifstream in(path.c_str());
     if (!in) throw std::runtime_error("cannot open order file: " + path);
-    std::map<Atom, std::string> names = atom_names(program);
-    std::map<std::string, Atom> by_name;
-    for (std::map<Atom, std::string>::const_iterator it = names.begin(); it != names.end(); ++it) {
-        if (!by_name.count(it->second)) by_name[it->second] = it->first;
+    std::map<std::string, std::set<Atom> > by_name;
+    for (size_t o = 0; o < program.outputs().size(); ++o) {
+        const Output& out = program.outputs()[o];
+        if (out.condition.size() == 1 && is_positive(out.condition[0])) by_name[out.name].insert(out.condition[0]);
     }
+    std::vector<Atom> atoms = program_atoms(program);
+    std::set<Atom> known(atoms.begin(), atoms.end());
     std::vector<Atom> order;
     std::string line;
     int line_no = 0;
@@ -274,9 +281,14 @@ std::vector<Atom> read_order_file(const std::string& path, const Program& progra
         if (b == std::string::npos || line[b] == '#' || line[b] == '%') continue;
         size_t e = line.find_last_not_of(" \t\r");
         std::string name = line.substr(b, e - b + 1);
-        std::map<std::string, Atom>::const_iterator it = by_name.find(name);
-        Atom a = it != by_name.end() ? it->second : parse_unnamed_atom(name);
-        if (a == 0 || (it == by_name.end() && a > program.max_atom())) {
+        std::map<std::string, std::set<Atom> >::const_iterator it = by_name.find(name);
+        if (it != by_name.end() && it->second.size() > 1) {
+            std::cerr << "ddasp: warning: order file line " << line_no << ": name '" << name
+                      << "' is shown for several atoms\n";
+            continue;
+        }
+        Atom a = it != by_name.end() ? *it->second.begin() : parse_unnamed_atom(name);
+        if (a == 0 || !known.count(a)) {
             std::cerr << "ddasp: warning: order file line " << line_no << ": unknown atom '" << name << "'\n";
             continue;
         }

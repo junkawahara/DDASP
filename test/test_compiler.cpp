@@ -339,6 +339,43 @@ TEST(Compiler, ProjectionToNothingGivesSingleEmptySet) {
     EXPECT_TRUE(family_of(compile(bad)).empty());
 }
 
+TEST(Compiler, AtomsOfNoRuleAreFalseAndGetNoVariable) {
+    // f. {a}. #show a/0. #show f/0. #show w : f.   (gringo: `4 1 w 1 -3`, atom 3 occurs nowhere else)
+    // #minimize{ 2 : a; 3 : not 3 }   (the weight of the absent atom's negation is a constant)
+    const char* text =
+        "asp 1 0 0\n"
+        "1 0 1 1 0 0\n"
+        "1 1 1 2 0 0\n"
+        "2 0 2 2 2 -3 3\n"
+        "4 1 a 1 2\n"
+        "4 1 f 0\n"
+        "4 1 w 1 -3\n"
+        "0\n";
+    Program p = read_aspif_string(text);
+    CompileResult res = compile(p, no_projection());
+    EXPECT_EQ(2u, res.vars.size());  // atoms 1 and 2 only
+    EXPECT_EQ(3u, res.atom_to_var.size());
+    EXPECT_EQ(F(S(1), S(1, 2)), family_of(res));
+    std::vector<std::string> shown = res.shown_names(std::vector<Atom>(1, 1));
+    ASSERT_EQ(2u, shown.size());  // f, w: the condition `not __atom3` always holds
+    EXPECT_EQ("f", shown[0]);
+    EXPECT_EQ("w", shown[1]);
+    ASSERT_EQ(1u, res.costs.size());
+    EXPECT_EQ(3, res.costs[0].offset);
+    EXPECT_EQ(2, res.costs[0].var_weights[res.atom_to_var[2]]);
+    CompileOptions opt = no_projection();
+    opt.optimize = true;
+    CompileResult best = compile(p, opt);
+    ASSERT_EQ(1u, best.optimum.size());
+    EXPECT_EQ(3, best.optimum[0]);
+    EXPECT_EQ(F(S(1)), family_of(best));
+    // program_atoms lists the atoms of rules and #external statements only.
+    std::vector<Atom> atoms = program_atoms(p);
+    ASSERT_EQ(2u, atoms.size());
+    EXPECT_EQ(1, atoms[0]);
+    EXPECT_EQ(2, atoms[1]);
+}
+
 TEST(Compiler, CostFunctionsAndOptimization) {
     // {a;b;c}. :- not a, not b, not c.
     // #minimize{ 1@1 : a; 2@1 : b; 5@0 : not c }

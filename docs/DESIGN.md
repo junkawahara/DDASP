@@ -109,7 +109,11 @@ The outputs of the ground program are split into
   hold. gringo rewrites compound conditions (`#show t : a, b.`) into an
   auxiliary atom, so conditions are single literals in practice.
 
-The *shown atoms* are the named atoms plus the atoms of term conditions. With
+The *shown atoms* are the named atoms plus the atoms of term conditions. An
+atom that occurs in no rule and no `#external` statement (gringo gives
+`#show w : f.` with `f` a fact the condition `not __atomN` on such an atom) is
+false in every answer set: it gets no DD variable (`program_atoms`), its
+literals in conditions and `#minimize` statements are constants. With
 projection, the hidden atoms are removed from the family with `ZDD::project`,
 so answer sets that differ only in hidden atoms collapse, and the terms can
 still be evaluated on the projected sets. `CompileResult::shown_names()`

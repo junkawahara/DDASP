@@ -202,16 +202,18 @@ def test_atoms_file_minimize_lines(ddasp_bin, tmp_path):
 
 def test_order_file_and_bdd_export(ddasp_bin, tmp_path):
     path = tmp_path / "p.lp"
-    path.write_text("{ p(1..3) }. q :- p(1). #show p/1.")
+    # Atoms: f = 1, p(1..3) = 2..4, q = 5; `#show w : f.` gets the condition `not __atom6` (no rule).
+    path.write_text("{ p(1..3) }. q :- p(1). f. #show p/1. #show w : f. #show t : p(2).")
     order = tmp_path / "order.txt"
-    order.write_text("# comment\np(3)\n__atom4\nnope\n")
+    order.write_text("# comment\np(3)\n__atom5\nnope\n__atom6\nt\n")
     atoms_file = tmp_path / "atoms.txt"
     bdd_file = tmp_path / "out.bdd"
     _, err = run_ddasp(ddasp_bin, [path], "-q", "--all-atoms", "--order", order, "--atoms", atoms_file,
                        "-o", bdd_file, "--bdd")
     assert "unknown atom 'nope'" in err
+    assert "unknown atom '__atom6'" in err  # an atom of no rule, below the largest atom id
     rows = [l.split(maxsplit=3) for l in atoms_file.read_text().splitlines() if not l.startswith("#")]
     names_top_down = [name for var, level, atom, name in rows]
-    assert names_top_down == ["p(3)", "__atom4", "p(1)", "p(2)"]
+    assert names_top_down == ["p(3)", "__atom5", "p(2)", "p(1)", "__atom1"]
     bdd = kyotodd.BDD.import_binary_str(bdd_file.read_bytes())
-    assert bdd.count(4) == 8  # characteristic function of 8 answer sets over 4 variables
+    assert bdd.count(5) == 8  # characteristic function of 8 answer sets over 5 variables

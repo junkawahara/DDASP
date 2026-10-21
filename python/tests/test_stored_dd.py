@@ -188,6 +188,18 @@ def test_recursive_aggregates_over_stored_atoms(tmp_path, second):
     assert set(res.answer_sets()) == set(clingo_answer_sets([p1, p2], project=True))
 
 
+def test_show_terms_conditioned_on_facts_do_not_block_saving(tmp_path, ddasp_bin):
+    # gringo gives `#show w : f.` the condition `not __atomN` with N an atom of
+    # no rule; such an atom is false, not a DD variable, so the DD can be stored.
+    prog = _write(tmp_path, "terms.lp", "f. {a}. #show f/0. #show a/0. #show w : f.")
+    got = ddasp_answer_sets(ddasp_bin, [prog], "--save", tmp_path / "terms.ddasp")
+    assert set(got) == {frozenset({"f", "w"}), frozenset({"f", "a", "w"})}
+    res = ddasp.compile_text("f. {a}. #show f/0. #show a/0. #show w : f.")
+    assert res.stored().names == ["a"]
+    assert res.stored().fact_names == ["f"]
+    assert ddasp.compile_text("#minimize{ 1 : a }. #show a/0.", optimize=True).optimum == []  # no rule for a
+
+
 def test_python_save_and_load_round_trip(tmp_path):
     res = ddasp.compile_text("f. {p(1..3)} 2. #show f/0. #show p/1.")
     path = tmp_path / "p.ddasp"

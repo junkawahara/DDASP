@@ -138,6 +138,14 @@ struct ShowTerm {
  */
 std::map<Atom, std::string> atom_names(const Program& program);
 
+/**
+ * @brief The atoms of a program, ascending: those of its rules and its #external
+ * statements. Every other atom (one mentioned only by a #show condition or a
+ * #minimize statement) has no rule, so it is false in every answer set and
+ * gets no DD variable.
+ */
+std::vector<Atom> program_atoms(const Program& program);
+
 /** @brief Result of a compilation. */
 struct CompileResult {
     /**
@@ -157,7 +165,7 @@ struct CompileResult {
     CompileStats stats;
     /** @brief var_to_atom[v] = atom of DD variable v (0 for variables not used by this result). */
     std::vector<Atom> var_to_atom;
-    /** @brief atom_to_var[a] = DD variable of atom a (0 if the atom does not occur in the program). */
+    /** @brief atom_to_var[a] = DD variable of atom a (0 if the atom has none, see program_atoms()). */
     std::vector<kyotodd::bddvar> atom_to_var;
     /** @brief Primary atom names (see atom_names()). */
     std::map<Atom, std::string> names;

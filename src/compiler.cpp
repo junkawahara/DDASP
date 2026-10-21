@@ -100,29 +100,18 @@ Method parse_method(const std::string& name) {
     throw std::invalid_argument("unknown method '" + name + "' (expected twocopy or scc)");
 }
 
-namespace {
-
-/** Collect every atom mentioned in the program, in ascending id order. */
-std::vector<Atom> collect_atoms(const Program& prog) {
+std::vector<Atom> program_atoms(const Program& prog) {
     std::set<Atom> atoms;
     for (size_t r = 0; r < prog.rules().size(); ++r) {
         const Rule& rule = prog.rules()[r];
         atoms.insert(rule.head.begin(), rule.head.end());
         for (size_t i = 0; i < rule.body.lits.size(); ++i) atoms.insert(atom_of(rule.body.lits[i].lit));
     }
-    for (size_t m = 0; m < prog.minimizes().size(); ++m) {
-        for (size_t i = 0; i < prog.minimizes()[m].lits.size(); ++i) {
-            atoms.insert(atom_of(prog.minimizes()[m].lits[i].lit));
-        }
-    }
-    for (size_t o = 0; o < prog.outputs().size(); ++o) {
-        for (size_t i = 0; i < prog.outputs()[o].condition.size(); ++i) {
-            atoms.insert(atom_of(prog.outputs()[o].condition[i]));
-        }
-    }
     for (size_t e = 0; e < prog.externals().size(); ++e) atoms.insert(prog.externals()[e].atom);
     return std::vector<Atom>(atoms.begin(), atoms.end());
 }
+
+namespace {
 
 /**
  * Split the #show outputs into fact names, primary atom names and terms, and
@@ -691,6 +680,11 @@ private:
         }
     }
 
+    /** DD variable of an atom, 0 when it has none (an atom of no rule and no #external). */
+    bddvar var_of(Atom a) const {
+        return static_cast<size_t>(a) < atom_to_var_.size() ? atom_to_var_[a] : 0;
+    }
+
     BDD x_of(Atom a) const { return BDD::prime(atom_to_var_[a]); }
     BDD u_of(Atom a) const { return BDD::prime(atom_to_uvar_[a]); }
 
@@ -893,7 +887,11 @@ private:
             for (size_t i = 0; i < min.lits.size(); ++i) {
                 Literal l = min.lits[i].lit;
                 long long w = min.lits[i].weight;
-                bddvar v = atom_to_var_[atom_of(l)];
+                bddvar v = var_of(atom_of(l));
+                if (v == 0) {  // an atom of no rule is false: only "not a" costs
+                    if (!is_positive(l)) cf.offset += w;
+                    continue;
+                }
                 if (is_positive(l)) {
                     cf.var_weights[v] += w;
                 } else {
@@ -941,7 +939,7 @@ CompileResult compile_with(const Program& program, const CompileOptions& options
     CompileResult res;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     std::set<Atom> shown = collect_names(program, res);
-    std::vector<Atom> atoms = collect_atoms(program);
+    std::vector<Atom> atoms = program_atoms(program);
     Spines spines;
     if (loaded) {
         for (size_t d = 0; d < loaded->size(); ++d) spines.push_back((*loaded)[d].atoms);
