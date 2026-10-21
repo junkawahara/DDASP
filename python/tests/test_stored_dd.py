@@ -237,3 +237,111 @@ def test_python_and_cli_files_interoperate(tmp_path, ddasp_bin):
     assert cli_file.read_bytes() == py_file.read_bytes()
     from_cli = ddasp.compile_files([fix], dds=[ddasp.load(cli_file)])
     assert set(from_cli.answer_sets()) == set(ddasp_answer_sets(ddasp_bin, [fix], "--load", py_file))
+
+
+# --- DDs built directly with KyotoDD -----------------------------------------
+
+
+def _work_patterns():
+    """The family of examples/shift_dd.py as (kyotodd.ZDD, {var: name}) and as Python sets."""
+    import itertools
+
+    import kyotodd
+
+    days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    kyotodd.init()
+    var = dict(zip(days, kyotodd.new_vars(len(days))))
+    family = kyotodd.ZDD.power_set(len(days)).size_le(4)
+    for i in range(len(days) - 2):
+        three = kyotodd.ZDD.single_set([var[days[i]], var[days[i + 1]], var[days[i + 2]]])
+        family = family - family.restrict(three)
+    expected = {
+        frozenset(f"work({days[i]})" for i in c)
+        for r in range(5)
+        for c in itertools.combinations(range(7), r)
+        if not any({i, i + 1, i + 2} <= set(c) for i in range(5))
+    }
+    return family, {var[d]: f"work({d})" for d in days}, expected
+
+
+def test_from_zdd_stores_a_hand_built_family():
+    family, names, expected = _work_patterns()
+    dd = ddasp.StoredDD.from_zdd(family, names)
+    assert len(expected) == 78
+    assert dd.names == [f"work({d})" for d in ["sun", "sat", "fri", "thu", "wed", "tue", "mon"]]
+    assert dd.fact_names == []
+    assert dd.count == 78 and set(dd.answer_sets()) == expected
+    res = ddasp.compile_files([EXAMPLES / "shift.lp"], dds=[dd])
+    sets = set(res.answer_sets())
+    assert len(sets) == 54
+    for s in sets:
+        work = {a for a in s if a.startswith("work")}
+        assert work in expected and ("work(sat)" in work or "work(sun)" in work)
+        assert f"days({len(work)})" in s
+
+
+def test_from_zdd_names_as_a_list_facts_and_terminal_families():
+    import kyotodd
+
+    kyotodd.init()
+    kyotodd.new_vars(3)
+    z = kyotodd.ZDD.from_sets([[1, 2], [3]])  # variables 1, 2, 3 are a, b, c
+    dd = ddasp.StoredDD.from_zdd(z, ["a", "b", "c"], fact_names=["f"])
+    assert dd.names == ["c", "b", "a"] and dd.fact_names == ["f"]
+    assert set(dd.answer_sets()) == {frozenset({"a", "b", "f"}), frozenset({"c", "f"})}
+    res = ddasp.compile_text("g :- f, c. #show g/0.", dds=[dd])
+    assert set(res.answer_sets()) == {frozenset({"a", "b", "f"}), frozenset({"c", "f", "g"})}
+    # The ZDD may use only some of the named variables.
+    part = ddasp.StoredDD.from_zdd(kyotodd.ZDD.single_set([2]), ["a", "b", "c"])
+    assert set(part.answer_sets()) == {frozenset({"b"})}
+    # Terminal families are stored as markers.
+    assert ddasp.StoredDD.from_zdd(kyotodd.ZDD(0), ["a"]).count == 0
+    single = ddasp.StoredDD.from_zdd(kyotodd.ZDD(1), ["a", "b"])
+    assert set(single.answer_sets()) == {frozenset()}
+    assert ddasp.compile_text("", dds=[single]).count == 1
+
+
+def test_from_zdd_rejects_bad_input():
+    import kyotodd
+
+    kyotodd.init()
+    kyotodd.new_vars(3)
+    z = kyotodd.ZDD.from_sets([[1, 2], [3]])
+    with pytest.raises(ValueError, match="no name"):
+        ddasp.StoredDD.from_zdd(z, ["a", "b"])
+    with pytest.raises(ValueError, match="levels 1..2"):
+        ddasp.StoredDD.from_zdd(kyotodd.ZDD.single_set([1]), {1: "a", 3: "c"})
+    with pytest.raises(ValueError, match="shared by two atoms"):
+        ddasp.StoredDD.from_zdd(z, ["a", "a", "c"])
+    with pytest.raises(ValueError, match="cannot be written as an atom"):
+        ddasp.StoredDD.from_zdd(z, ["a", "B", "c"])
+    with pytest.raises(ValueError, match="both a fact and an atom"):
+        ddasp.StoredDD.from_zdd(z, ["a", "b", "c"], fact_names=["b"])
+
+
+def test_shift_example_script_and_cli(tmp_path, ddasp_bin):
+    import subprocess
+    import sys
+
+    _, _, expected = _work_patterns()
+    out = tmp_path / "shift.ddasp"
+    run = subprocess.run([sys.executable, str(EXAMPLES / "shift_dd.py"), str(out)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith("78 work patterns")
+    assert set(ddasp.load(out).answer_sets()) == expected
+    sets = set(ddasp_answer_sets(ddasp_bin, [EXAMPLES / "shift.lp"], "--load", out))
+    assert len(sets) == 54
+    assert frozenset({"work(mon)", "work(sat)", "days(2)"}) in sets
+
+
+def test_maximal_independent_sets_example(tmp_path, ddasp_bin):
+    first = EXAMPLES / "independent_set.lp"
+    second = EXAMPLES / "independent_set_maximal.lp"
+    stored = tmp_path / "is.ddasp"
+    run_ddasp(ddasp_bin, [first], "--save", stored)
+    maximal = set(ddasp_answer_sets(ddasp_bin, [second], "--load", stored))
+    assert len(maximal) == 42
+    assert maximal == set(clingo_answer_sets([first, second], project=True))
+    smallest = set(ddasp_answer_sets(ddasp_bin, [second], "--load", stored, "--opt"))
+    assert len(smallest) == 2 and all(len(s) == 4 for s in smallest)
+    assert smallest == set(clingo_answer_sets([first, second], project=True, optimize=True))
