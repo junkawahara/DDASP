@@ -195,9 +195,38 @@ def test_show_terms_conditioned_on_facts_do_not_block_saving(tmp_path, ddasp_bin
     got = ddasp_answer_sets(ddasp_bin, [prog], "--save", tmp_path / "terms.ddasp")
     assert set(got) == {frozenset({"f", "w"}), frozenset({"f", "a", "w"})}
     res = ddasp.compile_text("f. {a}. #show f/0. #show a/0. #show w : f.")
-    assert res.stored().names == ["a"]
-    assert res.stored().fact_names == ["f"]
+    with pytest.warns(RuntimeWarning, match="term"):
+        stored = res.stored()
+    assert stored.names == ["a"] and stored.fact_names == ["f"]
     assert ddasp.compile_text("#minimize{ 1 : a }. #show a/0.", optimize=True).optimum == []  # no rule for a
+
+
+def test_dds_argument_accepts_a_single_dd_and_rejects_other_types(tmp_path):
+    base = ddasp.compile_text("{ a }. #show a/0.")
+    path = tmp_path / "a.ddasp"
+    base.save(path)
+    for single in (base, base.stored(), base.stored().data, path, str(path)):
+        assert ddasp.compile_text(":- a.", dds=single).count == 1
+    with pytest.raises(TypeError, match="dds"):
+        ddasp.compile_text(":- a.", dds=[42])
+    with pytest.raises(TypeError, match="iterable"):
+        ddasp.compile_text(":- a.", dds=42)
+
+
+def test_compile_control_takes_a_control_once():
+    import clingo
+
+    base = ddasp.compile_text("{ a }. #show a/0.").stored()
+    ctl = clingo.Control(["0"])
+    ctl.add("base", [], "q :- a. #show q/0.")
+    assert ddasp.compile_control(ctl, dds=[base]).count == 2
+    with pytest.raises(ValueError, match="once"):
+        ddasp.compile_control(ctl, dds=[base])
+    ctl = clingo.Control(["0"])
+    ctl.add("base", [], "{ a }. #show a/0.")
+    assert ddasp.compile_control(ctl).count == 2
+    with pytest.raises(ValueError, match="once"):
+        ddasp.compile_control(ctl)
 
 
 def test_python_save_and_load_round_trip(tmp_path):

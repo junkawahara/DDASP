@@ -12,7 +12,9 @@ Grounding is done by clingo; the ground program is collected through a
 ``clingo`` observer into a :class:`Program` and compiled by the C++ core.
 """
 
+import os
 import warnings
+import weakref
 from collections.abc import Mapping
 from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
@@ -411,7 +413,16 @@ def _as_stored(dd) -> StoredDD:
         return dd.stored()
     if isinstance(dd, (bytes, bytearray)):
         return StoredDD(bytes(dd))
-    return StoredDD.load(dd)  # a path
+    if isinstance(dd, (str, os.PathLike)):
+        return StoredDD.load(dd)
+    raise TypeError(f"dds: expected a StoredDD, a Result, a file path or bytes, got {type(dd).__name__}")
+
+
+def _stored_list(dds) -> List[StoredDD]:
+    """The ``dds`` argument as a list of StoredDD (a single DD may be given bare)."""
+    if isinstance(dds, (StoredDD, Result, bytes, bytearray, str, os.PathLike)):
+        dds = [dds]
+    return [_as_stored(dd) for dd in dds]
 
 
 def compile(
@@ -430,31 +441,41 @@ def compile(
     :param project: project the answer sets onto the shown atoms.
     :param optimize: keep only the optimal answer sets (#minimize).
     :param dds: stored DDs to load (:class:`StoredDD`, :class:`Result`, file path or
-                bytes). The program is compiled as it is: a stored atom it uses must
-                be ``#external`` and named in it (:func:`compile_control` and friends
-                add the declarations before grounding); the other stored atoms are
-                added as free, named atoms.
+                bytes; one of them or a list). The program is compiled as it is: a
+                stored atom it uses must be ``#external`` and named in it
+                (:func:`compile_control` and friends add the declarations before
+                grounding; stored *facts* are not added here); the other stored
+                atoms are added as free, named atoms.
     """
     if isinstance(order, str):
         heuristic, order_atoms = order, []
     else:
         heuristic, order_atoms = "name", list(order)
-    loaded = [_as_stored(dd).data for dd in dds]
+    loaded = [dd.data for dd in _stored_list(dds)]
     return Result(_core_compile(program, method, heuristic, order_atoms, project, optimize, loaded))
+
+
+_used_controls = weakref.WeakSet()  # controls compile_control has grounded
 
 
 def compile_control(control: clingo.Control, parts=(("base", []),), dds: Iterable = (), **kwargs) -> Result:
     """Ground ``parts`` of a ``clingo.Control`` and compile the ground program.
 
     The observer is registered here, so pass a control whose ``parts`` have not
-    been grounded yet (rules grounded earlier are not seen). Each call grounds
-    and registers again; to compile the same program several times, reuse the
-    :class:`Program` of an :class:`Observer` with :func:`compile` instead.
+    been grounded yet (rules grounded earlier are not seen). A control can be
+    passed once: grounding it again does not reproduce the ground program, so a
+    second call raises ``ValueError``. To compile the same program several
+    times, reuse the :class:`Program` of an :class:`Observer` with
+    :func:`compile` instead.
 
     The declarations of the stored DDs in ``dds`` are added as the program part
     ``ddasp_loaded`` and grounded together with ``parts``.
     """
-    dds = [_as_stored(dd) for dd in dds]
+    if control in _used_controls:
+        raise ValueError("compile_control grounds a clingo.Control once; pass a new control "
+                         "(or reuse the Program of an Observer with compile())")
+    _used_controls.add(control)
+    dds = _stored_list(dds)
     parts = list(parts)
     if dds:
         control.add("ddasp_loaded", [], "".join(dd.declarations() for dd in dds))
@@ -463,6 +484,7 @@ def compile_control(control: clingo.Control, parts=(("base", []),), dds: Iterabl
     control.register_observer(observer)
     control.ground(parts)
     return compile(observer.program, dds=dds, **kwargs)
+
 
 
 def compile_text(text: str, clingo_args: Iterable[str] = (), **kwargs) -> Result:
