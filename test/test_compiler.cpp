@@ -104,7 +104,7 @@ TEST(DdUtil, BddToZddOverRejectsForeignVariable) {
     BDD f = BDD::prime(a) & BDD::prime(b);
     EXPECT_THROW(bdd_to_zdd_over(f, std::vector<bddvar>(1, a)), std::invalid_argument);
     ZDD z = bdd_to_zdd_over(f.exist(b), std::vector<bddvar>(1, a));
-    EXPECT_EQ(1u, z.card());
+    EXPECT_EQ("1", z.exact_count().to_string());
 }
 
 TEST(Compiler, Fact) {
@@ -215,7 +215,7 @@ TEST(Compiler, NamesAndVariableMaps) {
     ASSERT_EQ(2u, res.vars.size());
     EXPECT_EQ(1, res.var_to_atom[res.atom_to_var[1]]);
     EXPECT_EQ(2, res.var_to_atom[res.atom_to_var[2]]);
-    EXPECT_EQ(4u, res.zdd.card());
+    EXPECT_EQ("4", res.zdd.exact_count().to_string());
     // AtomId order: atom 1 at the top level.
     EXPECT_GT(kyotodd::bddlevofvar(res.atom_to_var[1]), kyotodd::bddlevofvar(res.atom_to_var[2]));
     EXPECT_EQ(res.vars[0], res.atom_to_var[1]);
@@ -235,7 +235,7 @@ TEST(Compiler, FactNamesComeFromUnconditionalOutputs) {
     EXPECT_EQ("a", res.fact_names[0]);
     EXPECT_EQ(0u, res.names.count(1));
     EXPECT_EQ("c", res.atom_name(2));
-    EXPECT_EQ(2u, res.zdd.card());
+    EXPECT_EQ("2", res.zdd.exact_count().to_string());
 }
 
 TEST(Compiler, CustomOrder) {
@@ -247,7 +247,7 @@ TEST(Compiler, CustomOrder) {
     EXPECT_EQ(res.vars[0], res.atom_to_var[3]);
     EXPECT_EQ(res.vars[1], res.atom_to_var[1]);
     EXPECT_EQ(res.vars[2], res.atom_to_var[2]);
-    EXPECT_EQ(8u, res.zdd.card());
+    EXPECT_EQ("8", res.zdd.exact_count().to_string());
 
     CompileOptions bad = no_projection();
     bad.order.push_back(9);
@@ -281,7 +281,7 @@ TEST(Compiler, CompoundShowConditionKeepsItsAtomsShown) {
     Program p = read_aspif_string("asp 1 0 0\n1 1 2 1 2 0 0\n4 1 t 2 1 2\n0\n");
     CompileResult res = compile(p);
     EXPECT_EQ(2u, res.vars.size());
-    EXPECT_EQ(4u, res.zdd.card());
+    EXPECT_EQ("4", res.zdd.exact_count().to_string());
     ASSERT_EQ(1u, res.terms.size());
     EXPECT_EQ("t", res.terms[0].name);
     EXPECT_TRUE(res.names.empty());
@@ -353,7 +353,7 @@ TEST(Compiler, CostFunctionsAndOptimization) {
     EXPECT_EQ(5, all.costs[1].offset);
     EXPECT_EQ(-5, all.costs[1].var_weights[all.atom_to_var[3]]);
     EXPECT_TRUE(all.optimum.empty());
-    EXPECT_EQ(7u, all.zdd.card());
+    EXPECT_EQ("7", all.zdd.exact_count().to_string());
 
     CompileOptions opt = no_projection();
     opt.optimize = true;
@@ -487,7 +487,7 @@ TEST(Compiler, NaturalNameOrderPlacesUnnamedAtomsNearNeighbours) {
     EXPECT_EQ(res.atom_to_var[1], res.vars[2]);
     EXPECT_EQ(res.atom_to_var[4], res.vars[3]);
     EXPECT_EQ(res.atom_to_var[5], res.vars[4]);
-    EXPECT_EQ(16u, res.zdd.card());
+    EXPECT_EQ("16", res.zdd.exact_count().to_string());
 }
 
 TEST(DdUtil, DeepConversionsDoNotRecurse) {
@@ -499,7 +499,7 @@ TEST(DdUtil, DeepConversionsDoNotRecurse) {
     BDD all = BDD::True;  // x_1 ∧ ... ∧ x_n, built from the bottom level (1) up
     for (size_t i = 0; i < n; ++i) all = BDD::prime(vars[i]) & all;
     ZDD z = bdd_to_zdd_over(all, vars);
-    EXPECT_EQ("1", z.exact_count().to_string());  // (ZDD::card() itself recurses per level)
+    EXPECT_EQ("1", z.exact_count().to_string());
     EXPECT_EQ(all, zdd_to_bdd_over(z, vars));
 
     std::vector<BDD> terms;
