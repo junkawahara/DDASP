@@ -7,4 +7,5 @@ python/build/
 python/_skbuild/
 *.zdd
 *.aspif
+*.ddasp
 !examples/*.aspif
