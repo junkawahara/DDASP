@@ -87,7 +87,10 @@ enumeration.
   nodes and 20 s (the `size ↔ aux` constraints came first because their top
   levels were lowest), now 70k nodes and 0.03 s. The top-level rule alone
   already took 8-queens from 27 s / 34M peak nodes to 0.02 s / 92k, and the
-  dependency rule leaves that unchanged.
+  dependency rule leaves that unchanged. The constraints of loaded DDs go
+  before every other ready constraint whatever their top level: they are
+  strong constraints over free atoms, so everything else is built inside the
+  loaded family (a `#count` over 16 loaded atoms: 858k peak nodes -> 51k).
 
 ## #show projection (default on)
 

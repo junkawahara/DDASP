@@ -307,6 +307,9 @@ struct Part {
     BDD bdd;
     std::vector<Atom> defines;
     std::vector<Atom> uses;
+    bool first;  ///< conjoin before the other ready parts whatever its top level (loaded DDs)
+
+    Part() : first(false) {}
 };
 
 /**
@@ -343,11 +346,17 @@ BDD conjoin_sorted(std::vector<Part>& parts) {
             }
         }
     }
-    // Ready parts, lowest top level first (then by index, for a deterministic order).
-    typedef std::pair<bddvar, size_t> Key;
+    // Ready parts: the `first` ones, then the lowest top level, then the index (deterministic).
+    typedef std::pair<std::pair<int, bddvar>, size_t> Key;
+    struct KeyOf {
+        Key operator()(const Part& p, size_t i) const {
+            bddvar top = p.bdd.is_terminal() ? 0 : kyotodd::bddlevofvar(p.bdd.top());
+            return Key(std::make_pair(p.first ? 0 : 1, top), i);
+        }
+    } key_of;
     std::priority_queue<Key, std::vector<Key>, std::greater<Key> > ready;
     for (size_t i = 0; i < P; ++i) {
-        if (pending[i] == 0) ready.push(Key(parts[i].bdd.is_terminal() ? 0 : kyotodd::bddlevofvar(parts[i].bdd.top()), i));
+        if (pending[i] == 0) ready.push(key_of(parts[i], i));
     }
     BDD f = BDD::True;
     size_t done = 0;
@@ -356,7 +365,7 @@ BDD conjoin_sorted(std::vector<Part>& parts) {
             for (size_t i = 0; i < P; ++i) {
                 if (pending[i] > 0) {
                     pending[i] = 0;
-                    ready.push(Key(parts[i].bdd.is_terminal() ? 0 : kyotodd::bddlevofvar(parts[i].bdd.top()), i));
+                    ready.push(key_of(parts[i], i));
                 }
             }
         }
@@ -370,9 +379,7 @@ BDD conjoin_sorted(std::vector<Part>& parts) {
             if (--remaining_defs[a] != 0) continue;
             for (size_t j = 0; j < users[a].size(); ++j) {
                 size_t user = users[a][j];
-                if (pending[user] > 0 && --pending[user] == 0) {
-                    ready.push(Key(parts[user].bdd.is_terminal() ? 0 : kyotodd::bddlevofvar(parts[user].bdd.top()), user));
-                }
+                if (pending[user] > 0 && --pending[user] == 0) ready.push(key_of(parts[user], user));
             }
         }
     }
@@ -793,6 +800,7 @@ private:
             Part p;
             p.bdd = zdd_to_bdd_over(family, to);  // atoms never true in the family are false
             p.uses = target.atoms;
+            p.first = true;  // a strong constraint over free atoms: prune everything else with it
             parts.push_back(p);
         }
     }
