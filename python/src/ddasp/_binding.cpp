@@ -19,6 +19,7 @@
 #include "ddasp/aspif_reader.h"
 #include "ddasp/compiler.h"
 #include "ddasp/program.h"
+#include "ddasp/stored_dd.h"
 
 namespace py = pybind11;
 using namespace ddasp;
@@ -71,18 +72,33 @@ struct PlainResult {
     uint64_t zdd_nodes;
     uint64_t bdd_nodes;
     bool fresh_instance;
+    bool stored_ok;                           // stored_bytes is valid
+    std::string stored_bytes;                 // the result as a stored DD file image
+    std::string stored_error;                 // why it cannot be stored (when !stored_ok)
+    std::vector<std::string> stored_warnings;
 };
 
-PlainResult compile_plain(const Program& program, const CompileOptions& opts) {
+PlainResult compile_plain(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored) {
     std::lock_guard<std::mutex> lock(g_compile_mutex);
     PlainResult out;
     out.fresh_instance = reset_kyotodd();
-    CompileResult res = compile(program, opts);
+    std::vector<LoadedDD> loaded;
+    for (size_t i = 0; i < stored.size(); ++i) loaded.push_back(import_stored_dd(stored[i]));
+    CompileResult res = compile(program, opts, loaded);
     std::ostringstream zs, bs;
     res.zdd.export_binary(zs);
     res.bdd.export_binary(bs);
     out.zdd_bytes = zs.str();
     out.bdd_bytes = bs.str();
+    try {
+        std::ostringstream ss;
+        write_stored_dd(ss, res, &out.stored_warnings);
+        out.stored_bytes = ss.str();
+        out.stored_ok = true;
+    } catch (const std::invalid_argument& e) {
+        out.stored_ok = false;
+        out.stored_error = e.what();
+    }
     for (size_t i = 0; i < res.vars.size(); ++i) {
         int lev = static_cast<int>(kyotodd::bddlevofvar(res.vars[i]));
         out.levels.push_back(lev);
@@ -139,23 +155,38 @@ struct Result {
     std::vector<long long> optimum;
     std::string count;
     py::dict stats;
+    py::object stored_bytes;  // bytes, or None when the result cannot be stored
+    std::string stored_error;
+    std::vector<std::string> stored_warnings;
 };
 
+/** Parse a stored DD file image; malformed input becomes a ValueError. */
+StoredDDData parse_stored(const std::string& bytes) {
+    try {
+        std::istringstream is(bytes);
+        return read_stored_dd(is);
+    } catch (const std::exception& e) {
+        throw py::value_error(e.what());
+    }
+}
+
 Result compile_py(const Program& program, const std::string& method, const std::string& order_heuristic,
-                  const std::vector<int>& order, bool project, bool optimize) {
+                  const std::vector<int>& order, bool project, bool optimize, const std::vector<py::bytes>& loaded) {
     CompileOptions opts;
     opts.method = parse_method(method);
     opts.order_heuristic = parse_order_heuristic(order_heuristic);
     opts.order = order;
     opts.project_to_shown = project;
     opts.optimize = optimize;
+    std::vector<StoredDDData> stored;
+    for (size_t i = 0; i < loaded.size(); ++i) stored.push_back(parse_stored(std::string(loaded[i])));
 
     PlainResult plain;
     {
         // The compilation only touches C++ data (the Program must not be modified
         // meanwhile); release the GIL so that other Python threads can run.
         py::gil_scoped_release release;
-        plain = compile_plain(program, opts);
+        plain = compile_plain(program, opts, stored);
     }
     if (!plain.fresh_instance) {
         PyErr_WarnEx(PyExc_RuntimeWarning,
@@ -203,6 +234,12 @@ Result compile_py(const Program& program, const std::string& method, const std::
     out.stats["atoms"] = st.atoms;
     out.stats["groups"] = st.groups;
     out.stats["aux_vars"] = st.aux_vars;
+    out.stats["load_time"] = st.load_time;
+    out.stats["loaded_dds"] = st.loaded_dds;
+    out.stats["synthesized_atoms"] = st.synthesized_atoms;
+    out.stored_bytes = plain.stored_ok ? py::object(py::bytes(plain.stored_bytes)) : py::object(py::none());
+    out.stored_error = plain.stored_error;
+    out.stored_warnings = plain.stored_warnings;
     return out;
 }
 
@@ -270,9 +307,24 @@ PYBIND11_MODULE(_core, m) {
         .def_readonly("costs", &Result::costs)
         .def_readonly("optimum", &Result::optimum)
         .def_readonly("count", &Result::count)
-        .def_readonly("stats", &Result::stats);
+        .def_readonly("stats", &Result::stats)
+        .def_readonly("stored_bytes", &Result::stored_bytes)
+        .def_readonly("stored_error", &Result::stored_error)
+        .def_readonly("stored_warnings", &Result::stored_warnings);
 
     m.def("compile", &compile_py, py::arg("program"), py::arg("method") = "scc", py::arg("order") = "name",
           py::arg("order_atoms") = std::vector<int>(), py::arg("project") = true, py::arg("optimize") = false,
-          "Compile a Program into decision diagrams of its answer sets.");
+          py::arg("loaded") = std::vector<py::bytes>(),
+          "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images.");
+
+    m.def("stored_dd_parts",
+          [](const py::bytes& data) {
+              StoredDDData dd = parse_stored(std::string(data));
+              return py::make_tuple(dd.names, dd.fact_names, py::bytes(dd.payload), dd.terminal);
+          },
+          py::arg("data"),
+          "Parse a stored DD file image: (names top first, fact names, KyotoDD ZDD bytes, terminal: 0 payload / 1 empty / 2 {∅}).");
+    m.def("stored_dd_declarations",
+          [](const py::bytes& data) { return stored_dd_declarations(parse_stored(std::string(data))); },
+          py::arg("data"), "Program text declaring the atoms (#external, #show) and facts of a stored DD.");
 }

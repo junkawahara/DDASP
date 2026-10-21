@@ -142,3 +142,98 @@ def test_stats_and_help_mention_stored_dds(tmp_path, ddasp_bin):
     assert "loaded dd time:" in err
     out = subprocess.run([str(ddasp_bin), "--help"], capture_output=True, text=True).stdout
     assert "--save FILE" in out and "--load FILE" in out
+
+
+# --- Python API ---------------------------------------------------------------
+
+ddasp = pytest.importorskip("ddasp")
+pytest.importorskip("kyotodd")
+
+
+def test_python_result_as_stored_dd_matches_the_combined_program(tmp_path):
+    fix = _write(tmp_path, "fix.lp", FIX)
+    old = ddasp.compile_files([COLORING])
+    d = old.stored()
+    assert isinstance(d, ddasp.StoredDD)
+    assert len(d.names) == 15 and d.names[0] == "col(1,b)" and d.fact_names == []
+    assert d.count == old.count == 18
+    assert set(d.answer_sets()) == set(old.answer_sets())
+    new = ddasp.compile_files([fix], dds=[d])
+    assert set(new.answer_sets()) == set(clingo_answer_sets([COLORING, fix], project=True))
+    assert new.count == 12
+    assert new.stats["loaded_dds"] == 1 and new.stats["synthesized_atoms"] == 0
+    # A Result, a file path and the raw bytes are accepted as well.
+    assert ddasp.compile_files([fix], dds=[old]).count == 12
+    path = tmp_path / "coloring.ddasp"
+    old.save(path)
+    assert ddasp.compile_files([fix], dds=[str(path)]).count == 12
+    assert ddasp.compile_files([fix], dds=[path.read_bytes()]).count == 12
+
+
+def test_python_save_and_load_round_trip(tmp_path):
+    res = ddasp.compile_text("f. {p(1..3)} 2. #show f/0. #show p/1.")
+    path = tmp_path / "p.ddasp"
+    res.save(path)
+    d = ddasp.load(path)
+    assert d.names == ["p(1)", "p(2)", "p(3)"]
+    assert d.fact_names == ["f"]
+    assert d.data == path.read_bytes()
+    assert d.declarations() == (
+        "#external p(1).\n#show p(1) : p(1).\n#external p(2).\n#show p(2) : p(2).\n"
+        "#external p(3).\n#show p(3) : p(3).\nf.\n"
+    )
+    assert set(d.answer_sets()) == set(res.answer_sets())
+    assert d.count == res.count == 7
+    assert repr(d) == "StoredDD(3 atoms, 1 facts)"
+    # Terminal families are stored without a diagram.
+    none = ddasp.compile_text("a. :- a. #show a/0.").stored()
+    assert none.count == 0 and list(none.answer_sets()) == []
+    only_empty = ddasp.compile_text("{a}. :- a. #show a/0.").stored()
+    assert only_empty.count == 1 and list(only_empty.answer_sets()) == [frozenset()]
+
+
+def test_python_stored_atoms_stay_visible_and_facts_are_merged():
+    base = ddasp.compile_text("node(1..3). {in(N) : node(N)} 1. #show node/1. #show in/1.").stored()
+    assert base.fact_names == ["node(1)", "node(2)", "node(3)"]
+    new = ddasp.compile_text("cnt(C) :- C = #count{N : in(N)}. #show cnt/1.", dds=[base])
+    sets = set(new.answer_sets())
+    assert len(sets) == 4
+    assert all({"node(1)", "node(2)", "node(3)"} <= s for s in sets)
+    assert frozenset({"node(1)", "node(2)", "node(3)", "in(2)", "cnt(1)"}) in sets
+    assert new.fact_names == ["node(1)", "node(2)", "node(3)"]
+
+
+def test_python_several_dds_and_raw_program():
+    ab = ddasp.compile_text("{a;b}. :- a, b.").stored()
+    bc = ddasp.compile_text("{b;c}. :- b, c.").stored()
+    both = ddasp.compile_text(":- not b.", dds=[ab, bc])
+    assert set(both.answer_sets()) == {frozenset({"b"})}
+    # A raw Program is compiled as it is: the stored atoms are synthesized.
+    res = ddasp.compile(ddasp.Program(), dds=[ab, bc])
+    assert res.stats["synthesized_atoms"] == 3
+    assert len(set(res.answer_sets())) == 5
+
+
+def test_python_errors_and_warnings():
+    d = ddasp.compile_text("{a;b}. #show a/0. #show b/0.").stored()
+    with pytest.raises(ValueError, match="defined by a rule"):
+        ddasp.compile_text("a :- b.", dds=[d])
+    with pytest.raises(ValueError, match="fact"):
+        ddasp.compile_text("a.", dds=[d])
+    with pytest.raises(ValueError, match="not a DDASP stored DD"):
+        ddasp.StoredDD(b"junk")
+    with pytest.raises(ValueError, match="no name"):
+        ddasp.compile_text("{a}. b :- a. #show a/0.", project=False).stored()
+    with pytest.warns(RuntimeWarning, match="not stored"):
+        ddasp.compile_text("{a}. #show a/0. #show t : not a.").stored()
+
+
+def test_python_and_cli_files_interoperate(tmp_path, ddasp_bin):
+    fix = _write(tmp_path, "fix.lp", FIX)
+    cli_file = tmp_path / "cli.ddasp"
+    run_ddasp(ddasp_bin, [COLORING], "--save", cli_file)
+    py_file = tmp_path / "py.ddasp"
+    ddasp.compile_files([COLORING]).save(py_file)
+    assert cli_file.read_bytes() == py_file.read_bytes()
+    from_cli = ddasp.compile_files([fix], dds=[ddasp.load(cli_file)])
+    assert set(from_cli.answer_sets()) == set(ddasp_answer_sets(ddasp_bin, [fix], "--load", py_file))

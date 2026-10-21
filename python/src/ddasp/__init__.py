@@ -20,12 +20,16 @@ from clingo.backend import Observer as _ClingoObserver
 
 from ddasp._core import CoreResult, Program, read_aspif
 from ddasp._core import compile as _core_compile
+from ddasp._core import stored_dd_declarations as _stored_dd_declarations
+from ddasp._core import stored_dd_parts as _stored_dd_parts
 
 __all__ = [
     "Program",
     "Observer",
     "Result",
+    "StoredDD",
     "read_aspif",
+    "load",
     "compile",
     "compile_control",
     "compile_text",
@@ -232,6 +236,120 @@ class Result:
                     shown.add(name)
             yield facts | frozenset(shown)
 
+    # --- stored DDs -------------------------------------------------------
+    def stored(self) -> "StoredDD":
+        """The result as a :class:`StoredDD` (the file image written by ``save``).
+
+        Every variable of the result must carry a #show name (so not with
+        ``project=False`` and hidden atoms); otherwise ``ValueError`` is raised.
+        Show terms (additional names, negated conditions) are not stored; a
+        ``RuntimeWarning`` reports it.
+        """
+        data = self._core.stored_bytes
+        if data is None:
+            raise ValueError(self._core.stored_error)
+        for w in self._core.stored_warnings:
+            warnings.warn("ddasp: " + w, RuntimeWarning, stacklevel=2)
+        return StoredDD(data)
+
+    def save(self, path) -> None:
+        """Write the result as a stored DD file (see :meth:`stored`)."""
+        self.stored().save(path)
+
+
+class StoredDD:
+    """A stored DD: the answer-set family of a compilation together with its
+    atom names and fact names, in the file format of ``ddasp --save``.
+
+    Loading one into a compilation (the ``dds`` argument of :func:`compile_text`
+    and friends) adds every stored atom to the program as a named ``#external``
+    atom and keeps only the answer sets whose restriction to the stored atoms is
+    one of the stored sets. The program may use the stored atoms in rule bodies
+    and constraints but must not define them.
+    """
+
+    def __init__(self, data: bytes):
+        names, fact_names, payload, terminal = _stored_dd_parts(data)  # validates the image
+        self._data = bytes(data)
+        self._names = list(names)
+        self._fact_names = list(fact_names)
+        self._payload = payload
+        self._terminal = terminal
+        self._zdd = None
+
+    @classmethod
+    def load(cls, path) -> "StoredDD":
+        with open(path, "rb") as f:
+            return cls(f.read())
+
+    def save(self, path) -> None:
+        with open(path, "wb") as f:
+            f.write(self._data)
+
+    @property
+    def data(self) -> bytes:
+        """The file image."""
+        return self._data
+
+    @property
+    def names(self) -> List[str]:
+        """Atom names, top of the diagram first."""
+        return list(self._names)
+
+    @property
+    def fact_names(self) -> List[str]:
+        """Names shown in every answer set."""
+        return list(self._fact_names)
+
+    def declarations(self) -> str:
+        """Program text (``#external``, ``#show``, facts) that declares the stored atoms."""
+        return _stored_dd_declarations(self._data)
+
+    @property
+    def zdd(self):
+        """The family as a ``kyotodd.ZDD``; the atom of variable ``v`` is
+        ``names[len(names) - kyotodd.to_level(v)]``."""
+        if self._zdd is None:
+            import kyotodd
+
+            if self._terminal:
+                self._zdd = kyotodd.ZDD(1 if self._terminal == 2 else 0)
+            else:
+                self._zdd = kyotodd.ZDD.import_binary_str(self._payload)
+        return self._zdd
+
+    @property
+    def count(self) -> int:
+        """Number of stored answer sets (via kyotodd)."""
+        return int(self.zdd.exact_count)
+
+    def answer_sets(self) -> Iterator[frozenset]:
+        """Iterate over the stored answer sets as frozensets of names (via kyotodd)."""
+        import kyotodd
+
+        facts = frozenset(self._fact_names)
+        n = len(self._names)
+        for s in self.zdd.enumerate():
+            yield facts | frozenset(self._names[n - kyotodd.to_level(v)] for v in s)
+
+    def __repr__(self) -> str:
+        return f"StoredDD({len(self._names)} atoms, {len(self._fact_names)} facts)"
+
+
+def load(path) -> StoredDD:
+    """Read a stored DD file (written by :meth:`Result.save` or ``ddasp --save``)."""
+    return StoredDD.load(path)
+
+
+def _as_stored(dd) -> StoredDD:
+    if isinstance(dd, StoredDD):
+        return dd
+    if isinstance(dd, Result):
+        return dd.stored()
+    if isinstance(dd, (bytes, bytearray)):
+        return StoredDD(bytes(dd))
+    return StoredDD.load(dd)  # a path
+
 
 def compile(
     program: Program,
@@ -239,6 +357,7 @@ def compile(
     order: Union[str, Sequence[int]] = "name",
     project: bool = True,
     optimize: bool = False,
+    dds: Iterable = (),
 ) -> Result:
     """Compile a :class:`Program`.
 
@@ -247,26 +366,40 @@ def compile(
                   (the remaining atoms follow in name order).
     :param project: project the answer sets onto the shown atoms.
     :param optimize: keep only the optimal answer sets (#minimize).
+    :param dds: stored DDs to load (:class:`StoredDD`, :class:`Result`, file path or
+                bytes). The program is compiled as it is: a stored atom it uses must
+                be ``#external`` and named in it (:func:`compile_control` and friends
+                add the declarations before grounding); the other stored atoms are
+                added as free, named atoms.
     """
     if isinstance(order, str):
         heuristic, order_atoms = order, []
     else:
         heuristic, order_atoms = "name", list(order)
-    return Result(_core_compile(program, method, heuristic, order_atoms, project, optimize))
+    loaded = [_as_stored(dd).data for dd in dds]
+    return Result(_core_compile(program, method, heuristic, order_atoms, project, optimize, loaded))
 
 
-def compile_control(control: clingo.Control, parts=(("base", []),), **kwargs) -> Result:
+def compile_control(control: clingo.Control, parts=(("base", []),), dds: Iterable = (), **kwargs) -> Result:
     """Ground ``parts`` of a ``clingo.Control`` and compile the ground program.
 
     The observer is registered here, so pass a control whose ``parts`` have not
     been grounded yet (rules grounded earlier are not seen). Each call grounds
     and registers again; to compile the same program several times, reuse the
     :class:`Program` of an :class:`Observer` with :func:`compile` instead.
+
+    The declarations of the stored DDs in ``dds`` are added as the program part
+    ``ddasp_loaded`` and grounded together with ``parts``.
     """
+    dds = [_as_stored(dd) for dd in dds]
+    parts = list(parts)
+    if dds:
+        control.add("ddasp_loaded", [], "".join(dd.declarations() for dd in dds))
+        parts.append(("ddasp_loaded", []))
     observer = Observer()
     control.register_observer(observer)
-    control.ground(list(parts))
-    return compile(observer.program, **kwargs)
+    control.ground(parts)
+    return compile(observer.program, dds=dds, **kwargs)
 
 
 def compile_text(text: str, clingo_args: Iterable[str] = (), **kwargs) -> Result:
