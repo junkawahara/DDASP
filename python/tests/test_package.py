@@ -70,6 +70,26 @@ def test_program_builder_and_aspif():
     assert ddasp.compile(parsed).count == 3
 
 
+def test_program_rejects_bad_atoms_and_literals():
+    prog = ddasp.Program()
+    with pytest.raises(ValueError, match="atom must be positive"):
+        prog.add_rule(False, [-1], [])
+    with pytest.raises(ValueError, match="literal must be nonzero"):
+        prog.add_rule(False, [1], [0])
+    with pytest.raises(ValueError, match="literal must be nonzero"):
+        prog.add_weight_rule(False, [1], 1, [(0, 1)])
+    with pytest.raises(ValueError, match="literal must be nonzero"):
+        prog.add_minimize(0, [(0, 1)])
+    with pytest.raises(ValueError, match="literal must be nonzero"):
+        prog.add_output("a", [0])
+    with pytest.raises(ValueError, match="atom must be positive"):
+        prog.add_external(0)
+    with pytest.raises(ValueError, match="atom must be positive"):
+        prog.add_projection([0])
+    assert prog.num_rules == 0 and prog.max_atom == 0
+    assert ddasp.compile(prog).count == 1
+
+
 def test_order_and_variables():
     prog = ddasp.Program()
     prog.add_rule(True, [1, 2, 3], [])

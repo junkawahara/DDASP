@@ -149,12 +149,19 @@ class Program {
 public:
     Program() : max_atom_(0) {}
 
+    /**
+     * @name Building the program
+     * Every atom must be positive and every literal nonzero; otherwise
+     * std::invalid_argument is thrown and the statement is not added.
+     */
+    ///@{
     void add_rule(const Rule& rule);
     void add_minimize(const Minimize& minimize);
     void add_output(const Output& output);
     void add_external(const External& external);
     /** @brief Record a #project statement (kept for information only). */
     void add_projection(const std::vector<Atom>& atoms);
+    ///@}
 
     const std::vector<Rule>& rules() const { return rules_; }
     const std::vector<Minimize>& minimizes() const { return minimizes_; }

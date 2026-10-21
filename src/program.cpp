@@ -1,8 +1,21 @@
 #include "ddasp/program.h"
 
 #include <sstream>
+#include <stdexcept>
 
 namespace ddasp {
+
+namespace {
+
+void check_atom(Atom a, const char* what) {
+    if (a <= 0) throw std::invalid_argument(std::string("atom must be positive in ") + what);
+}
+
+void check_literal(Literal l, const char* what) {
+    if (l == 0) throw std::invalid_argument(std::string("literal must be nonzero in ") + what);
+}
+
+}  // namespace
 
 Body Body::normal(const std::vector<Literal>& literals) {
     Body b;
@@ -28,27 +41,33 @@ void Program::note_atom(Atom a) {
 }
 
 void Program::add_rule(const Rule& rule) {
+    for (size_t i = 0; i < rule.head.size(); ++i) check_atom(rule.head[i], "a rule head");
+    for (size_t i = 0; i < rule.body.lits.size(); ++i) check_literal(rule.body.lits[i].lit, "a rule body");
     for (size_t i = 0; i < rule.head.size(); ++i) note_atom(rule.head[i]);
     for (size_t i = 0; i < rule.body.lits.size(); ++i) note_literal(rule.body.lits[i].lit);
     rules_.push_back(rule);
 }
 
 void Program::add_minimize(const Minimize& minimize) {
+    for (size_t i = 0; i < minimize.lits.size(); ++i) check_literal(minimize.lits[i].lit, "a #minimize statement");
     for (size_t i = 0; i < minimize.lits.size(); ++i) note_literal(minimize.lits[i].lit);
     minimizes_.push_back(minimize);
 }
 
 void Program::add_output(const Output& output) {
+    for (size_t i = 0; i < output.condition.size(); ++i) check_literal(output.condition[i], "a #show condition");
     for (size_t i = 0; i < output.condition.size(); ++i) note_literal(output.condition[i]);
     outputs_.push_back(output);
 }
 
 void Program::add_external(const External& external) {
+    check_atom(external.atom, "an #external statement");
     note_atom(external.atom);
     externals_.push_back(external);
 }
 
 void Program::add_projection(const std::vector<Atom>& atoms) {
+    for (size_t i = 0; i < atoms.size(); ++i) check_atom(atoms[i], "a #project statement");
     for (size_t i = 0; i < atoms.size(); ++i) {
         note_atom(atoms[i]);
         projections_.push_back(atoms[i]);

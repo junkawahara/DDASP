@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
 #include "ddasp/program.h"
 
 using namespace ddasp;
@@ -88,4 +90,25 @@ TEST(Program, ToStringRoundTripsAspifShape) {
         "5 3 2\n"
         "0\n";
     EXPECT_EQ(expected, p.to_string());
+}
+
+TEST(Program, RejectsNonPositiveAtomsAndZeroLiterals) {
+    Program p;
+    EXPECT_THROW(p.add_rule(Rule(HeadType::Disjunction, std::vector<Atom>(1, -1), Body::normal(std::vector<Literal>()))),
+                 std::invalid_argument);
+    EXPECT_THROW(p.add_rule(Rule(HeadType::Choice, std::vector<Atom>(1, 0), Body::normal(std::vector<Literal>()))),
+                 std::invalid_argument);
+    EXPECT_THROW(p.add_rule(Rule(HeadType::Disjunction, std::vector<Atom>(1, 1), Body::normal(std::vector<Literal>(1, 0)))),
+                 std::invalid_argument);
+    EXPECT_THROW(p.add_rule(Rule(HeadType::Disjunction, std::vector<Atom>(1, 1),
+                                 Body::weight(1, std::vector<WeightedLiteral>(1, WeightedLiteral(0, 1))))),
+                 std::invalid_argument);
+    EXPECT_THROW(p.add_minimize(Minimize(0, std::vector<WeightedLiteral>(1, WeightedLiteral(0, 1)))), std::invalid_argument);
+    EXPECT_THROW(p.add_output(Output("a", std::vector<Literal>(1, 0))), std::invalid_argument);
+    EXPECT_THROW(p.add_external(External(0, ExternalValue::Free)), std::invalid_argument);
+    EXPECT_THROW(p.add_projection(std::vector<Atom>(1, -2)), std::invalid_argument);
+    // Nothing was added and the largest atom is unchanged.
+    EXPECT_TRUE(p.rules().empty() && p.minimizes().empty() && p.outputs().empty() && p.externals().empty());
+    EXPECT_TRUE(p.projections().empty());
+    EXPECT_EQ(0, p.max_atom());
 }
