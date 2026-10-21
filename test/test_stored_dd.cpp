@@ -546,3 +546,59 @@ TEST(LoadedDD, EarlierDDsWinOnSharedAtoms) {
     EXPECT_EQ(names("b", "a", "c"), var_names(res, all));
     EXPECT_EQ(8u, family_of(res).size());
 }
+
+TEST(StoredDD, WriteFromPartsAcceptsADiagramBuiltByHand) {
+    // The family {{a,b}, {c}} over levels 3 (a), 2 (b), 1 (c), built directly with KyotoDD.
+    while (kyotodd::bddvarused() < 3) kyotodd::bddnewvar();
+    bddvar a = kyotodd::bddvaroflev(3), b = kyotodd::bddvaroflev(2), c = kyotodd::bddvaroflev(1);
+    ZDD z = (ZDD::Single.change(a).change(b)) + ZDD::Single.change(c);
+    std::ostringstream buf;
+    z.export_binary(buf);
+
+    StoredDDData dd;
+    dd.names.push_back("a");
+    dd.names.push_back("b");
+    dd.names.push_back("c");
+    dd.fact_names.push_back("f");
+    dd.fact_names.push_back("f");  // duplicates are dropped
+    dd.payload = buf.str();
+    std::ostringstream os;
+    write_stored_dd_data(os, dd);
+    EXPECT_EQ(0u, os.str().find("ddasp-dd 1\natoms 3\na\nb\nc\nfacts 1\nf\nzdd "));
+
+    LoadedDD loaded = import_stored_dd(parse(os.str()));
+    NameFamily expected;
+    std::set<std::string> ab;
+    ab.insert("a");
+    ab.insert("b");
+    expected.insert(ab);
+    expected.insert(N("c"));
+    EXPECT_EQ(expected, family_of(loaded));
+    ASSERT_EQ(1u, loaded.data.fact_names.size());
+
+    // Terminal families are written as markers.
+    StoredDDData empty;
+    empty.names.push_back("a");
+    empty.terminal = 1;
+    std::ostringstream es;
+    write_stored_dd_data(es, empty);
+    EXPECT_NE(std::string::npos, es.str().find("\nzdd empty\n"));
+    EXPECT_TRUE(import_stored_dd(parse(es.str())).zdd.is_zero());
+
+    // Bad parts are rejected.
+    StoredDDData bad = dd;
+    bad.names[2] = "a";
+    EXPECT_THROW(write_stored_dd_data(os, bad), std::invalid_argument);
+    bad = dd;
+    bad.fact_names.push_back("b");
+    EXPECT_THROW(write_stored_dd_data(os, bad), std::invalid_argument);
+    bad = dd;
+    bad.names[0] = "Not an atom";
+    EXPECT_THROW(write_stored_dd_data(os, bad), std::invalid_argument);
+    bad = dd;
+    bad.terminal = 2;  // marker together with diagram data
+    EXPECT_THROW(write_stored_dd_data(os, bad), std::invalid_argument);
+    bad = dd;
+    bad.payload.clear();  // no diagram data and no marker
+    EXPECT_THROW(write_stored_dd_data(os, bad), std::invalid_argument);
+}

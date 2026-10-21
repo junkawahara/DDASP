@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <istream>
+#include <map>
 #include <ostream>
 #include <set>
 #include <sstream>
@@ -97,8 +98,8 @@ void read_names(std::istream& is, size_t count, const char* what, std::vector<st
 
 void write_stored_dd(std::ostream& os, const CompileResult& res, std::vector<std::string>* warnings) {
     const size_t n = res.vars.size();
-    std::vector<std::string> names(n);
-    std::set<std::string> seen;
+    StoredDDData dd;
+    dd.names.resize(n);
     for (size_t k = 0; k < n; ++k) {
         Atom a = res.var_to_atom[res.vars[k]];
         std::map<Atom, std::string>::const_iterator it = res.names.find(a);
@@ -106,20 +107,9 @@ void write_stored_dd(std::ostream& os, const CompileResult& res, std::vector<std
             throw std::invalid_argument("cannot store the DD: atom " + res.atom_name(a) +
                                         " has no name (every stored atom needs a #show name)");
         }
-        check_name(it->second, "atom name");
-        if (!seen.insert(it->second).second) {
-            throw std::invalid_argument("cannot store the DD: name '" + it->second + "' is shared by two atoms");
-        }
-        names[k] = it->second;
+        dd.names[k] = it->second;
     }
-    std::vector<std::string> facts;
-    std::set<std::string> fact_seen;
-    for (size_t i = 0; i < res.fact_names.size(); ++i) {
-        const std::string& f = res.fact_names[i];
-        check_name(f, "fact name");
-        if (seen.count(f)) throw std::invalid_argument("cannot store the DD: name '" + f + "' is both a fact and an atom");
-        if (fact_seen.insert(f).second) facts.push_back(f);
-    }
+    dd.fact_names = res.fact_names;
     if (!res.terms.empty() && warnings) {
         warnings->push_back("stored DD: " + std::to_string(res.terms.size()) +
                             " #show term(s) (additional names, negated conditions) are not stored");
@@ -129,22 +119,54 @@ void write_stored_dd(std::ostream& os, const CompileResult& res, std::vector<std
     std::vector<bddvar> to(n);
     for (size_t k = 0; k < n; ++k) to[k] = kyotodd::bddvaroflev(static_cast<bddvar>(n - k));
     ZDD z = rename_zdd(res.zdd, res.vars, to);
-
-    os << kMagicLine << "\n";
-    os << "atoms " << n << "\n";
-    for (size_t k = 0; k < n; ++k) os << names[k] << "\n";
-    os << "facts " << facts.size() << "\n";
-    for (size_t i = 0; i < facts.size(); ++i) os << facts[i] << "\n";
     if (z.is_zero()) {
-        os << "zdd empty\n";
+        dd.terminal = 1;
     } else if (z.is_one()) {
-        os << "zdd single\n";
+        dd.terminal = 2;
     } else {
         std::ostringstream buf;
         z.export_binary(buf);
-        const std::string bytes = buf.str();
-        os << "zdd " << bytes.size() << "\n";
-        os.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        dd.payload = buf.str();
+    }
+    write_stored_dd_data(os, dd);
+}
+
+void write_stored_dd_data(std::ostream& os, const StoredDDData& dd) {
+    std::set<std::string> seen;
+    for (size_t k = 0; k < dd.names.size(); ++k) {
+        check_name(dd.names[k], "atom name");
+        if (!seen.insert(dd.names[k]).second) {
+            throw std::invalid_argument("cannot store the DD: name '" + dd.names[k] + "' is shared by two atoms");
+        }
+    }
+    std::vector<std::string> facts;
+    std::set<std::string> fact_seen;
+    for (size_t i = 0; i < dd.fact_names.size(); ++i) {
+        const std::string& f = dd.fact_names[i];
+        check_name(f, "fact name");
+        if (seen.count(f)) throw std::invalid_argument("cannot store the DD: name '" + f + "' is both a fact and an atom");
+        if (fact_seen.insert(f).second) facts.push_back(f);
+    }
+    if (dd.terminal < 0 || dd.terminal > 2) throw std::invalid_argument("cannot store the DD: bad terminal marker");
+    if (dd.terminal != 0 && !dd.payload.empty()) {
+        throw std::invalid_argument("cannot store the DD: a terminal family must not carry diagram data");
+    }
+    if (dd.terminal == 0 && dd.payload.empty()) {
+        throw std::invalid_argument("cannot store the DD: the diagram data is empty");
+    }
+
+    os << kMagicLine << "\n";
+    os << "atoms " << dd.names.size() << "\n";
+    for (size_t k = 0; k < dd.names.size(); ++k) os << dd.names[k] << "\n";
+    os << "facts " << facts.size() << "\n";
+    for (size_t i = 0; i < facts.size(); ++i) os << facts[i] << "\n";
+    if (dd.terminal == 1) {
+        os << "zdd empty\n";
+    } else if (dd.terminal == 2) {
+        os << "zdd single\n";
+    } else {
+        os << "zdd " << dd.payload.size() << "\n";
+        os.write(dd.payload.data(), static_cast<std::streamsize>(dd.payload.size()));
     }
     if (!os) throw std::runtime_error("stored DD: write error");
 }

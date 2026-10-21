@@ -55,6 +55,20 @@ struct StoredDDData {
 void write_stored_dd(std::ostream& os, const CompileResult& res, std::vector<std::string>* warnings = 0);
 
 /**
+ * @brief Write a stored DD from its parts (a diagram that did not come from a
+ * compilation, e.g. one built directly with KyotoDD).
+ *
+ * @c dd.payload must be a KyotoDD ZDD export whose levels are 1..N
+ * (N = dd.names.size(); a diagram built in a fresh KyotoDD instance with N
+ * variables, or one renamed with rename_zdd), or empty with @c dd.terminal 1
+ * (the empty family) or 2 (the family {∅}). The names are validated as in
+ * write_stored_dd (distinct, writable as atoms; duplicate fact names are
+ * dropped). @throws std::invalid_argument on a bad name or part,
+ * std::runtime_error when the stream fails.
+ */
+void write_stored_dd_data(std::ostream& os, const StoredDDData& dd);
+
+/**
  * @brief Parse a stored DD (the stream must be opened in binary mode).
  * @throws std::runtime_error on a malformed file.
  */
