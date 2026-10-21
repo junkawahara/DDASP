@@ -439,7 +439,9 @@ def compile(
     :param order: ``"name"`` (default), ``"id"``, or a list of atom ids to place on top
                   (the remaining atoms follow in name order).
     :param project: project the answer sets onto the shown atoms.
-    :param optimize: keep only the optimal answer sets (#minimize).
+    :param optimize: keep only the optimal answer sets (#minimize). Weights must fit
+                     in 32 bits (``ValueError`` otherwise); note that clingo itself
+                     truncates larger weights to 32 bits while grounding.
     :param dds: stored DDs to load (:class:`StoredDD`, :class:`Result`, file path or
                 bytes; one of them or a list). The program is compiled as it is: a
                 stored atom it uses must be ``#external`` and named in it

@@ -8,8 +8,9 @@ Supported: normal, choice, constraint and disjunctive rules (including non
 head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection
 (including `#show t : not a.` style terms), `#minimize` (optimal answer sets
 only, or cost functions), `#external` atoms (kept as free variables unless a
-rule defines them, as in clingo; their initial value is ignored). `#project`, `#heuristic`, assumptions, edges and
-theory atoms are ignored with a warning.
+rule defines them, as in clingo; their initial value is ignored). `#project`
+is read but ignored; `#heuristic`, assumptions, edges and theory atoms are
+ignored with a warning.
 
 **New to ASP or DDASP?** Read the beginner's guide (Japanese):
 [docs/GUIDE_ja.md](docs/GUIDE_ja.md) — 初心者向け利用ガイド(ASP の基本文法から ZDD の活用まで)。

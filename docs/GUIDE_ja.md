@@ -155,10 +155,10 @@ answer sets: 7
 
 c
 b
-c b
+b c
 a
-c a
-b a
+a c
+a b
 ```
 
 1 行が 1 つの解集合で、真になった原子が並びます。最初の空行は「どれも真でない」解です。
@@ -218,7 +218,7 @@ a :- c.
 ```
 answer sets: 2
 
-c b a
+a b c
 ```
 
 `a` と `b` は互いに支え合っていますが、`c` が偽のときは `a`, `b` を真にする
@@ -353,9 +353,9 @@ color(r). color(g). color(b).
 
 ```
 answer sets: 18
-col(5,g) col(4,r) col(3,b) col(2,g) col(1,r)
-col(5,b) col(4,r) col(3,b) col(2,g) col(1,r)
-col(5,b) col(4,g) col(3,b) col(2,g) col(1,r)
+col(1,r) col(2,g) col(3,b) col(4,r) col(5,g)
+col(1,r) col(2,g) col(3,b) col(4,r) col(5,b)
+col(1,r) col(2,g) col(3,b) col(4,g) col(5,b)
 ```
 
 `--limit 3` で最初の 3 個だけを表示しています。個数(18)はすべての解を
@@ -388,11 +388,11 @@ col(5,b) col(4,g) col(3,b) col(2,g) col(1,r)
 ```
 answer sets: 6
 b
-c b
+b c
 a
-c a
-b a
-c b a
+a c
+a b
+a b c
 ```
 
 `--opt` を付けると、コストが最小の解だけが残ります。
@@ -435,10 +435,10 @@ reach(Y) :- reach(X), use(X,Y).
 
 ```
 answer sets: 4
-use(4,5) use(3,4) use(2,3) use(1,2)
-use(5,4) use(4,5) use(3,4) use(2,3) use(1,2)
-use(4,5) use(3,4) use(3,1) use(2,3) use(1,2)
-use(5,4) use(4,5) use(3,4) use(3,1) use(2,3) use(1,2)
+use(1,2) use(2,3) use(3,4) use(4,5)
+use(1,2) use(2,3) use(3,4) use(4,5) use(5,4)
+use(1,2) use(2,3) use(3,1) use(3,4) use(4,5)
+use(1,2) use(2,3) use(3,1) use(3,4) use(4,5) use(5,4)
 ```
 
 辺 1→2→3→4→5 は必須で、`use(3,1)` と `use(5,4)` は自由なので 2² = 4 個です。
@@ -496,8 +496,8 @@ vertex(Y) :- edge(_,Y).
 ```
 answer sets: 8
 optimum: 4
-in(6) in(5) in(3) in(2)
-in(6) in(4) in(3) in(2)
+in(2) in(3) in(5) in(6)
+in(2) in(3) in(4) in(6)
 ...
 ```
 
@@ -531,8 +531,8 @@ item(e, 1,  1).
 ```
 answer sets: 2
 optimum: -18
-in(d) in(c) in(a)
-in(e) in(b) in(a)
+in(a) in(c) in(d)
+in(a) in(b) in(e)
 ```
 
 価値 18 の選び方が 2 通りあります(`optimum` は最小化した値なので負になります)。
@@ -605,7 +605,7 @@ red(N) :- col(N,r).     % 保存した原子から新しい原子を導出
 
 ```
 answer sets: 12
-col(1,b) col(2,g) col(3,r) col(4,b) col(5,g) red(3)
+col(1,g) col(2,r) col(3,b) col(4,r) col(5,b) red(2) red(4)
 ...
 ```
 

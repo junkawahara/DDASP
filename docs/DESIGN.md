@@ -17,7 +17,7 @@ prog.lp --gringo--> aspif text --AspifReader--> Program --Compiler--> BDD --> ZD
 - A `Rule` has a head (`Disjunction` or `Choice`, possibly empty = constraint) and a
   body that is either a conjunction of literals (`Normal`) or a weight body
   `sum(w_i * [lit_i]) >= bound` (`Weight`). A normal body is stored as a weight body
-  with all weights 1 and bound = number of literals, with the `kind` flag preserved
+  with all weights 1 and bound = number of literals, with `Body::type` preserved
   so that output and tests can distinguish them.
 - `Minimize { priority, [(literal, weight)] }`, `Output { name, condition }`,
   `externals` (atoms that have no defining rule and are left free).
@@ -126,7 +126,11 @@ Each priority level becomes a linear cost over DD variables
 (`CostFunction`: offset + Σ weight·[atom ∈ X]; `not a` with weight w gives
 offset +w and weight −w on a). Costs are computed before projection. With
 `--opt`, levels are processed from the most important priority down, each time
-keeping the sets with `cost == min_weight` via `cost_bound_le`.
+keeping the sets with `cost == min_weight` via `cost_bound_le`; KyotoDD's
+weights are 32-bit, so a weight outside that range is an error when
+optimizing (cost functions themselves are 64-bit). clingo truncates weights
+to 32 bits before DDASP sees them (its observer and gringo's aspif output), so
+`#minimize { 3000000000 : a }` arrives as -1294967296 without a warning.
 
 ## Conversions and deep diagrams
 
@@ -166,7 +170,10 @@ of D". The CLI and `compile_control` ground these declarations together with
 P (a temporary file / the part `ddasp_loaded`); `compile()` on a ground
 `Program` matches the stored names with P's outputs (every output whose
 condition is a single positive atom counts) and adds the atoms P does not
-mention as fresh named `#external` atoms, so they stay free and visible.
+mention as fresh named `#external` atoms, so they stay free and visible. The
+fact names of D are only appended to the result there: a ground `Program`
+that uses a stored fact in a body sees it as an atom of no rule (false)
+unless the caller added the fact itself, as the CLI and `compile_control` do.
 
 Correctness follows from the splitting-set theorem: D is AS(P_old) projected
 onto its shown atoms, P may use those atoms only in bodies (an atom of D in a

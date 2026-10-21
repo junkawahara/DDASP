@@ -198,8 +198,8 @@ const size_t kMaxBddVariables = 65536;
 /**
  * @brief Compile a program into a ZDD (and BDD) of its answer sets.
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
- *         a #minimize weight outside the 32-bit range, more variables needed than
- *         kMaxBddVariables).
+ *         when optimizing a #minimize weight outside the 32-bit range, more
+ *         variables needed than kMaxBddVariables).
  */
 CompileResult compile(const Program& program, const CompileOptions& options = CompileOptions());
 
