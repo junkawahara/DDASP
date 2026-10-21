@@ -13,6 +13,7 @@ Grounding is done by clingo; the ground program is collected through a
 """
 
 import warnings
+from collections.abc import Mapping
 from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 import clingo
@@ -21,6 +22,7 @@ from clingo.backend import Observer as _ClingoObserver
 from ddasp._core import CoreResult, Program, read_aspif
 from ddasp._core import compile as _core_compile
 from ddasp._core import stored_dd_declarations as _stored_dd_declarations
+from ddasp._core import stored_dd_image as _stored_dd_image
 from ddasp._core import stored_dd_parts as _stored_dd_parts
 
 __all__ = [
@@ -281,6 +283,47 @@ class StoredDD:
     def load(cls, path) -> "StoredDD":
         with open(path, "rb") as f:
             return cls(f.read())
+
+    @classmethod
+    def from_zdd(cls, zdd, names, fact_names: Iterable[str] = ()) -> "StoredDD":
+        """A stored DD from a ``kyotodd.ZDD`` built directly with KyotoDD (not by a
+        compilation), so that an ASP program can use the family as a constraint.
+
+        ``names`` gives the atom name of each variable of ``zdd``: a dict
+        ``{variable: name}``, or a list naming the variables ``1, 2, ...`` in order.
+        The named variables must occupy levels ``1..N`` of the kyotodd instance
+        (as ``kyotodd.new_vars(N)`` in a fresh instance does) and every variable
+        that occurs in ``zdd`` must be named. ``fact_names`` are shown in every
+        answer set. Names must be distinct and writable as atoms of a program;
+        ``ValueError`` otherwise.
+        """
+        import kyotodd
+
+        items = list(names.items()) if isinstance(names, Mapping) else list(enumerate(names, start=1))
+        n = len(items)
+        by_level = {}
+        for v, name in items:
+            lev = kyotodd.to_level(v)
+            if lev in by_level:
+                raise ValueError(f"variables {by_level[lev][0]} and {v} are the same variable")
+            by_level[lev] = (v, str(name))
+        if sorted(by_level) != list(range(1, n + 1)):
+            raise ValueError(
+                f"the named variables must occupy levels 1..{n} of the kyotodd instance "
+                f"(their levels are {sorted(by_level)})"
+            )
+        named = {v for v, _ in items}
+        unnamed = [v for v in zdd.support_vars() if v not in named]
+        if unnamed:
+            raise ValueError(f"variables {sorted(unnamed)} occur in the ZDD but have no name")
+        top_first = [by_level[lev][1] for lev in range(n, 0, -1)]
+        if zdd.is_zero:
+            terminal, payload = 1, b""
+        elif zdd.is_one:
+            terminal, payload = 2, b""
+        else:
+            terminal, payload = 0, zdd.export_binary_str()
+        return cls(_stored_dd_image(top_first, [str(f) for f in fact_names], payload, terminal))
 
     def save(self, path) -> None:
         with open(path, "wb") as f:

@@ -324,6 +324,25 @@ PYBIND11_MODULE(_core, m) {
           },
           py::arg("data"),
           "Parse a stored DD file image: (names top first, fact names, KyotoDD ZDD bytes, terminal: 0 payload / 1 empty / 2 {∅}).");
+    m.def("stored_dd_image",
+          [](const std::vector<std::string>& names, const std::vector<std::string>& fact_names,
+             const py::bytes& payload, int terminal) {
+              StoredDDData dd;
+              dd.names = names;
+              dd.fact_names = fact_names;
+              dd.payload = std::string(payload);
+              dd.terminal = terminal;
+              try {
+                  std::ostringstream os;
+                  write_stored_dd_data(os, dd);
+                  return py::bytes(os.str());
+              } catch (const std::invalid_argument& e) {
+                  throw py::value_error(e.what());
+              }
+          },
+          py::arg("names"), py::arg("fact_names"), py::arg("payload"), py::arg("terminal"),
+          "Build a stored DD file image from its parts (names top first, fact names, KyotoDD ZDD bytes "
+          "over levels 1..N, terminal: 0 payload / 1 empty / 2 {∅}).");
     m.def("stored_dd_declarations",
           [](const py::bytes& data) { return stored_dd_declarations(parse_stored(std::string(data))); },
           py::arg("data"), "Program text declaring the atoms (#external, #show) and facts of a stored DD.");
