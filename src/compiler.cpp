@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "ddasp/dd_util.h"
+#include "ddasp/stored_dd.h"
 
 namespace ddasp {
 
@@ -344,6 +345,12 @@ std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_at
     return sccs;
 }
 
+/** A loaded DD and the atom of the program that each of its names refers to. */
+struct LoadedTarget {
+    const LoadedDD* dd;
+    std::vector<Atom> atoms;  ///< same order as dd->data.names
+};
+
 /**
  * Compiler shared by both methods.
  *
@@ -365,8 +372,8 @@ std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_at
 class Compiler {
 public:
     Compiler(const Program& prog, const std::vector<Atom>& order, const std::set<Atom>& shown,
-             const CompileOptions& options)
-        : prog_(prog), order_(order), shown_(shown), options_(options) {
+             const CompileOptions& options, const std::vector<LoadedTarget>* loaded = 0)
+        : prog_(prog), order_(order), shown_(shown), options_(options), loaded_(loaded) {
         Atom max_atom = 0;
         for (size_t i = 0; i < order_.size(); ++i) max_atom = std::max(max_atom, order_[i]);
         if (options_.method == Method::TwoCopy) {
@@ -393,6 +400,11 @@ public:
         if (options_.method == Method::Scc) {
             build_supported(parts);
             st.supported_time = t.lap();
+        }
+        if (loaded_) {
+            build_loaded(parts);
+            st.load_time = t.lap();
+            st.loaded_dds = loaded_->size();
         }
         BDD stable = conjoin_sorted(parts);
         parts.clear();
@@ -583,6 +595,21 @@ private:
         }
     }
 
+    /**
+     * One constraint per loaded DD: X restricted to the atoms of the DD is a set
+     * of its family. Being integrity constraints over X only, they can be
+     * conjoined with Models(X) before the unfounded sets are considered.
+     */
+    void build_loaded(std::vector<BDD>& parts) const {
+        for (size_t d = 0; d < loaded_->size(); ++d) {
+            const LoadedTarget& target = (*loaded_)[d];
+            std::vector<bddvar> to(target.atoms.size());
+            for (size_t k = 0; k < to.size(); ++k) to[k] = atom_to_var_[target.atoms[k]];
+            ZDD family = rename_zdd(target.dd->zdd, target.dd->vars, to);
+            parts.push_back(zdd_to_bdd_over(family, to));  // atoms never true in the family are false
+        }
+    }
+
     /** Bad_G(X) = ∃U ⊆ G (U ∩ X ≠ ∅ ∧ U ⊆ X ∧ U unfounded w.r.t. X). */
     BDD build_unfounded(const std::vector<Atom>& group_atoms) const {
         std::set<Atom> group(group_atoms.begin(), group_atoms.end());
@@ -690,19 +717,132 @@ private:
     std::vector<Atom> var_to_atom_;
     std::vector<std::vector<size_t> > rules_of_head_;
     std::vector<bool> is_external_;
+    const std::vector<LoadedTarget>* loaded_;
 };
 
-}  // namespace
-
-CompileResult compile(const Program& program, const CompileOptions& options) {
+CompileResult compile_with(const Program& program, const CompileOptions& options,
+                           const std::vector<LoadedTarget>* loaded) {
     CompileResult res;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     std::set<Atom> shown = collect_names(program, res);
     std::vector<Atom> atoms = collect_atoms(program);
     std::vector<Atom> order = resolve_order(program, atoms, options, res.names);
     res.stats.order_time = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    Compiler c(program, order, shown, options);
+    Compiler c(program, order, shown, options, loaded);
     return c.run(res);
+}
+
+/** Atoms named by each #show output whose condition is a single positive atom. */
+std::map<std::string, std::set<Atom> > atoms_by_name(const Program& prog) {
+    std::map<std::string, std::set<Atom> > by_name;
+    for (size_t o = 0; o < prog.outputs().size(); ++o) {
+        const Output& out = prog.outputs()[o];
+        if (out.condition.size() == 1 && is_positive(out.condition[0])) by_name[out.name].insert(out.condition[0]);
+    }
+    return by_name;
+}
+
+std::string quoted(const std::string& s) { return "'" + s + "'"; }
+
+std::invalid_argument load_error(const std::string& what) { return std::invalid_argument("loaded DD: " + what); }
+
+}  // namespace
+
+CompileResult compile(const Program& program, const CompileOptions& options) {
+    return compile_with(program, options, 0);
+}
+
+CompileResult compile(const Program& program, const CompileOptions& options, const std::vector<LoadedDD>& loaded) {
+    if (loaded.empty()) return compile(program, options);
+
+    std::map<std::string, std::set<Atom> > by_name = atoms_by_name(program);
+    std::set<std::string> program_facts;
+    for (size_t o = 0; o < program.outputs().size(); ++o) {
+        if (program.outputs()[o].condition.empty()) program_facts.insert(program.outputs()[o].name);
+    }
+    // A name must be an atom everywhere or a fact everywhere.
+    std::set<std::string> dd_atoms, dd_facts;
+    for (size_t d = 0; d < loaded.size(); ++d) {
+        const StoredDDData& data = loaded[d].data;
+        for (size_t k = 0; k < data.names.size(); ++k) {
+            const std::string& n = data.names[k];
+            if (program_facts.count(n)) throw load_error("atom " + quoted(n) + " is a fact of the program");
+            if (dd_facts.count(n)) throw load_error("atom " + quoted(n) + " is a fact of another loaded DD");
+            dd_atoms.insert(n);
+        }
+        for (size_t i = 0; i < data.fact_names.size(); ++i) {
+            const std::string& f = data.fact_names[i];
+            if (by_name.count(f)) throw load_error("fact " + quoted(f) + " is an atom of the program");
+            if (dd_atoms.count(f)) throw load_error("fact " + quoted(f) + " is an atom of another loaded DD");
+            dd_facts.insert(f);
+        }
+    }
+
+    std::set<Atom> heads;
+    for (size_t r = 0; r < program.rules().size(); ++r) {
+        const Rule& rule = program.rules()[r];
+        heads.insert(rule.head.begin(), rule.head.end());
+    }
+    std::set<Atom> externals;
+    for (size_t e = 0; e < program.externals().size(); ++e) externals.insert(program.externals()[e].atom);
+    std::map<Atom, std::string> primary = atom_names(program);
+
+    // Match every stored atom with an atom of the program; the atoms the program
+    // does not mention become fresh #external atoms of a copy of the program.
+    Program augmented;
+    const Program* prog = &program;
+    Atom next_atom = program.max_atom() + 1;
+    size_t synthesized = 0;
+    std::vector<LoadedTarget> targets(loaded.size());
+    for (size_t d = 0; d < loaded.size(); ++d) {
+        const StoredDDData& data = loaded[d].data;
+        targets[d].dd = &loaded[d];
+        std::map<Atom, std::string> used;  // atom of the program -> stored name that took it
+        for (size_t k = 0; k < data.names.size(); ++k) {
+            const std::string& n = data.names[k];
+            Atom a;
+            std::map<std::string, std::set<Atom> >::const_iterator it = by_name.find(n);
+            if (it == by_name.end()) {
+                if (prog != &augmented) {
+                    augmented = program;
+                    prog = &augmented;
+                }
+                a = next_atom++;
+                augmented.add_external(External(a, ExternalValue::Free));
+                augmented.add_output(Output(n, std::vector<Literal>(1, a)));
+                by_name[n].insert(a);
+                ++synthesized;
+            } else if (it->second.size() > 1) {
+                throw load_error("name " + quoted(n) + " is shown for several atoms of the program");
+            } else {
+                a = *it->second.begin();
+                std::string shown_as = primary.count(a) && primary[a] != n ? " (atom " + quoted(primary[a]) + " of the program)" : "";
+                if (heads.count(a)) {
+                    throw load_error("atom " + quoted(n) + shown_as +
+                                     " is defined by a rule of the program; loaded atoms may only occur in bodies");
+                }
+                if (!externals.count(a)) {
+                    throw load_error("atom " + quoted(n) + shown_as + " is not declared #external in the program");
+                }
+            }
+            if (!used.insert(std::make_pair(a, n)).second) {
+                throw load_error("atoms " + quoted(used[a]) + " and " + quoted(n) + " both refer to atom " +
+                                 quoted(primary.count(a) ? primary[a] : n) + " of the program");
+            }
+            targets[d].atoms.push_back(a);
+        }
+    }
+
+    CompileResult res = compile_with(*prog, options, &targets);
+    res.stats.synthesized_atoms = synthesized;
+    std::set<std::string> have(res.fact_names.begin(), res.fact_names.end());
+    for (size_t d = 0; d < loaded.size(); ++d) {
+        const std::vector<std::string>& facts = loaded[d].data.fact_names;
+        for (size_t i = 0; i < facts.size(); ++i) {
+            if (have.insert(facts[i]).second) res.fact_names.push_back(facts[i]);
+        }
+    }
+    return res;
 }
 
 }  // namespace ddasp

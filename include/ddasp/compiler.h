@@ -107,10 +107,14 @@ struct CompileStats {
     size_t atoms;            ///< number of atoms of the program (one x variable each)
     size_t groups;           ///< number of unfounded-set groups (SCCs) quantified
     size_t aux_vars;         ///< number of auxiliary u variables allocated
+    double load_time;        ///< mapping the loaded DDs onto the program's variables
+    size_t loaded_dds;       ///< number of loaded DDs conjoined
+    size_t synthesized_atoms;  ///< atoms of the loaded DDs that the program did not mention
 
     CompileStats()
         : order_time(0), models_time(0), supported_time(0), conjoin_time(0), unfounded_time(0), convert_time(0), optimize_time(0),
-          project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), atoms(0), groups(0), aux_vars(0) {}
+          project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), atoms(0), groups(0), aux_vars(0),
+          load_time(0), loaded_dds(0), synthesized_atoms(0) {}
 };
 
 /**
@@ -190,6 +194,27 @@ const size_t kMaxBddVariables = 65536;
  *         kMaxBddVariables).
  */
 CompileResult compile(const Program& program, const CompileOptions& options = CompileOptions());
+
+struct LoadedDD;  // stored_dd.h
+
+/**
+ * @brief Compile a program together with loaded (stored) DDs.
+ *
+ * Loading a stored DD D is the same as adding to the program `#external n.`
+ * and `#show n : n.` for every atom name n of D, the fact `f.` for every fact
+ * name f of D, and the constraint "the answer set restricted to the atoms of D
+ * is a set of D". The atoms of D are matched by name with the atoms of the
+ * program (every #show output whose condition is that single positive atom
+ * counts as a name); atoms the program does not mention are added to a copy of
+ * it as named #external atoms, so they stay free, constrained only by D, and
+ * visible in the result. The fact names of D are appended to the result's.
+ *
+ * @throws std::invalid_argument when a stored atom is defined by the program
+ *         (it occurs in a rule head or is a fact), is not #external, has an
+ *         ambiguous name, when two stored atoms refer to the same atom of the
+ *         program, or when a name is an atom in one place and a fact in another.
+ */
+CompileResult compile(const Program& program, const CompileOptions& options, const std::vector<LoadedDD>& loaded);
 
 }  // namespace ddasp
 

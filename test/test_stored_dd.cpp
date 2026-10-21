@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <sstream>
@@ -232,4 +233,235 @@ TEST(StoredDD, RejectsMalformedFiles) {
     ASSERT_NE(std::string::npos, atoms);
     std::string fewer = bytes.substr(0, atoms) + "atoms 2\nb\nc\n" + bytes.substr(atoms + std::string("atoms 3\na\nb\nc\n").size());
     EXPECT_THROW(import_stored_dd(parse(fewer)), std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
+// Compiling a program together with loaded DDs.
+
+namespace {
+
+LoadedDD load_from(const CompileResult& res) { return import_stored_dd(parse(store(res))); }
+
+std::vector<LoadedDD> one(const LoadedDD& dd) { return std::vector<LoadedDD>(1, dd); }
+
+NameFamily family_with(const std::string& aspif, const std::vector<LoadedDD>& loaded,
+                       const CompileOptions& opts = CompileOptions()) {
+    return family_of(compile(read_aspif_string(aspif), opts, loaded));
+}
+
+NameFamily family_plain(const std::string& aspif, const CompileOptions& opts = CompileOptions()) {
+    return family_of(compile_aspif(aspif, opts));
+}
+
+std::set<std::string> N(const char* a, const char* b) { std::set<std::string> s = N(a); s.insert(b); return s; }
+std::set<std::string> N(const char* a, const char* b, const char* c) { std::set<std::string> s = N(a, b); s.insert(c); return s; }
+
+}  // namespace
+
+TEST(LoadedDD, ActsAsAConstraintAndKeepsUnmentionedAtoms) {
+    LoadedDD d = load_from(compile_aspif(kChoice));
+    // #external a. #external b. :- b.  #show a/0. #show b/0.   (c is not mentioned)
+    const char* p_new =
+        "asp 1 0 0\n"
+        "5 1 0\n"
+        "5 2 0\n"
+        "1 0 0 0 1 2\n"
+        "4 1 a 1 1\n"
+        "4 1 b 1 2\n"
+        "0\n";
+    CompileResult res = compile(read_aspif_string(p_new), CompileOptions(), one(d));
+    NameFamily expected;
+    expected.insert(N());
+    expected.insert(N("a"));
+    expected.insert(N("c"));
+    expected.insert(N("a", "c"));
+    EXPECT_EQ(expected, family_of(res));
+    EXPECT_EQ(3u, res.vars.size());  // c is visible, as a synthesized #external atom
+    EXPECT_EQ(1u, res.stats.synthesized_atoms);
+    EXPECT_EQ(1u, res.stats.loaded_dds);
+    // The same as compiling P_old together with the new constraint.
+    EXPECT_EQ(expected, family_plain(
+                            "asp 1 0 0\n"
+                            "1 1 3 1 2 3 0 0\n"
+                            "1 0 0 0 2 1 2\n"
+                            "1 0 0 0 1 2\n"
+                            "4 1 a 1 1\n"
+                            "4 1 b 1 2\n"
+                            "4 1 c 1 3\n"
+                            "0\n"));
+}
+
+TEST(LoadedDD, ExtendsTheProgramWithDerivedAtoms) {
+    LoadedDD d = load_from(compile_aspif(kChoice));
+    // #external a. q :- a.  #show a/0. #show q/0.
+    NameFamily got = family_with(
+        "asp 1 0 0\n"
+        "5 1 0\n"
+        "1 0 1 2 0 1 1\n"
+        "4 1 a 1 1\n"
+        "4 1 q 1 2\n"
+        "0\n",
+        one(d));
+    // {a;b;c}. :- a, b. q :- a.
+    NameFamily expected = family_plain(
+        "asp 1 0 0\n"
+        "1 1 3 1 2 3 0 0\n"
+        "1 0 0 0 2 1 2\n"
+        "1 0 1 4 0 1 1\n"
+        "4 1 a 1 1\n"
+        "4 1 b 1 2\n"
+        "4 1 c 1 3\n"
+        "4 1 q 1 4\n"
+        "0\n");
+    EXPECT_EQ(expected, got);
+    EXPECT_EQ(6u, got.size());
+    EXPECT_TRUE(got.count(N("a", "c", "q")));
+}
+
+TEST(LoadedDD, AtomsNeverTrueInTheFamilyStayFalse) {
+    // {a;b}. :- a.   -> a is never true
+    LoadedDD d = load_from(compile_aspif("asp 1 0 0\n1 1 2 1 2 0 0\n1 0 0 0 1 1\n4 1 a 1 1\n4 1 b 1 2\n0\n"));
+    // #external a. #external b. q :- a. r :- b.
+    NameFamily got = family_with(
+        "asp 1 0 0\n"
+        "5 1 0\n"
+        "5 2 0\n"
+        "1 0 1 3 0 1 1\n"
+        "1 0 1 4 0 1 2\n"
+        "4 1 a 1 1\n"
+        "4 1 b 1 2\n"
+        "4 1 q 1 3\n"
+        "4 1 r 1 4\n"
+        "0\n",
+        one(d));
+    NameFamily expected;
+    expected.insert(N());
+    expected.insert(N("b", "r"));
+    EXPECT_EQ(expected, got);
+}
+
+TEST(LoadedDD, SeveralDDsSharingAtoms) {
+    LoadedDD d1 = load_from(compile_aspif("asp 1 0 0\n1 1 2 1 2 0 0\n1 0 0 0 2 1 2\n4 1 a 1 1\n4 1 b 1 2\n0\n"));
+    LoadedDD d2 = load_from(compile_aspif("asp 1 0 0\n1 1 2 1 2 0 0\n1 0 0 0 2 1 2\n4 1 b 1 1\n4 1 c 1 2\n0\n"));
+    std::vector<LoadedDD> both;
+    both.push_back(d1);
+    both.push_back(d2);
+    // #external b.  #show b/0.
+    NameFamily got = family_with("asp 1 0 0\n5 1 0\n4 1 b 1 1\n0\n", both);
+    NameFamily expected;
+    expected.insert(N());
+    expected.insert(N("a"));
+    expected.insert(N("b"));
+    expected.insert(N("c"));
+    expected.insert(N("a", "c"));
+    EXPECT_EQ(expected, got);
+    // ... :- not b.
+    NameFamily only_b = family_with("asp 1 0 0\n5 1 0\n1 0 0 0 1 -1\n4 1 b 1 1\n0\n", both);
+    NameFamily expected_b;
+    expected_b.insert(N("b"));
+    EXPECT_EQ(expected_b, only_b);
+}
+
+TEST(LoadedDD, FactNamesAreMerged) {
+    // f. g. {p}.  #show f/0. #show g/0. #show p/0.
+    LoadedDD d = load_from(compile_aspif(
+        "asp 1 0 0\n1 0 1 1 0 0\n1 0 1 2 0 0\n1 1 1 3 0 0\n4 1 f 0\n4 1 g 0\n4 1 p 1 3\n0\n"));
+    // f. #external p. q :- p.   #show f/0. #show p/0. #show q/0.
+    CompileResult res = compile(read_aspif_string(
+                                    "asp 1 0 0\n1 0 1 1 0 0\n5 2 0\n1 0 1 3 0 1 2\n4 1 f 0\n4 1 p 1 2\n4 1 q 1 3\n0\n"),
+                                CompileOptions(), one(d));
+    ASSERT_EQ(2u, res.fact_names.size());
+    EXPECT_EQ("f", res.fact_names[0]);
+    EXPECT_EQ("g", res.fact_names[1]);
+    NameFamily expected;
+    expected.insert(N());
+    expected.insert(N("p", "q"));
+    EXPECT_EQ(expected, family_of(res));
+}
+
+TEST(LoadedDD, OptimizationOverLoadedAtoms) {
+    LoadedDD d = load_from(compile_aspif(kChoice));
+    // #external a;b;c.  #minimize{ -1:a; -1:b; -1:c }.   -> the largest sets of the family
+    CompileOptions opt;
+    opt.optimize = true;
+    CompileResult res = compile(read_aspif_string(
+                                    "asp 1 0 0\n5 1 0\n5 2 0\n5 3 0\n2 0 3 1 -1 2 -1 3 -1\n4 1 a 1 1\n4 1 b 1 2\n4 1 c 1 3\n0\n"),
+                                opt, one(d));
+    ASSERT_EQ(1u, res.optimum.size());
+    EXPECT_EQ(-2, res.optimum[0]);
+    NameFamily expected;
+    expected.insert(N("a", "c"));
+    expected.insert(N("b", "c"));
+    EXPECT_EQ(expected, family_of(res));
+}
+
+TEST(LoadedDD, ProjectionAppliesToTheProgramsOwnAtoms) {
+    LoadedDD d = load_from(compile_aspif(kChoice));
+    // #external a. h :- a.  #show a/0.   (h is hidden)
+    const char* p_new = "asp 1 0 0\n5 1 0\n1 0 1 2 0 1 1\n4 1 a 1 1\n0\n";
+    EXPECT_EQ(family_of(compile_aspif(kChoice)), family_with(p_new, one(d)));  // h projected away
+    CompileOptions all;
+    all.project_to_shown = false;
+    NameFamily kept = family_with(p_new, one(d), all);
+    EXPECT_EQ(6u, kept.size());
+    EXPECT_TRUE(kept.count(N("a", "c", "__atom2")));
+}
+
+TEST(LoadedDD, InconsistentFamilyMakesTheProgramInconsistent) {
+    LoadedDD d = load_from(compile_aspif("asp 1 0 0\n1 0 1 1 0 0\n1 0 0 0 1 1\n4 1 a 1 1\n0\n"));
+    EXPECT_TRUE(family_with("asp 1 0 0\n0\n", one(d)).empty());
+    EXPECT_TRUE(family_with("asp 1 0 0\n5 1 0\n4 1 a 1 1\n0\n", one(d)).empty());
+}
+
+TEST(LoadedDD, StoredOrderMayDifferFromTheProgramsOrder) {
+    // Stored with the atom-id order: c (atom 1) on top, a (atom 3) at the bottom.
+    CompileOptions by_id;
+    by_id.order_heuristic = OrderHeuristic::AtomId;
+    LoadedDD d = load_from(compile_aspif(
+        "asp 1 0 0\n1 1 3 1 2 3 0 0\n1 0 0 0 2 2 3\n4 1 c 1 1\n4 1 b 1 2\n4 1 a 1 3\n0\n", by_id));
+    EXPECT_EQ("c", d.data.names[0]);
+    EXPECT_EQ("a", d.data.names[2]);
+    // The name order puts a on top: the renaming reverses the levels.
+    NameFamily got = family_with("asp 1 0 0\n5 1 0\n1 0 0 0 1 1\n4 1 b 1 1\n0\n", one(d));
+    NameFamily expected;
+    expected.insert(N());
+    expected.insert(N("a"));
+    expected.insert(N("c"));
+    expected.insert(N("a", "c"));
+    EXPECT_EQ(expected, got);
+}
+
+TEST(LoadedDD, RejectsProgramsThatDefineStoredAtoms) {
+    LoadedDD d = load_from(compile_aspif(kChoice));
+    // #external a. a :- b. {b}.
+    EXPECT_THROW(family_with("asp 1 0 0\n5 1 0\n1 0 1 1 0 1 2\n1 1 1 2 0 0\n4 1 a 1 1\n4 1 b 1 2\n0\n", one(d)),
+                 std::invalid_argument);
+    // a.   (a fact of the program)
+    EXPECT_THROW(family_with("asp 1 0 0\n1 0 1 1 0 0\n4 1 a 0\n0\n", one(d)), std::invalid_argument);
+    // q :- a.  #show a/0.   (a is not #external)
+    EXPECT_THROW(family_with("asp 1 0 0\n1 0 1 2 0 1 1\n4 1 a 1 1\n4 1 q 1 2\n0\n", one(d)), std::invalid_argument);
+    // #external x. #external y. #show a : x. #show a : y.   (ambiguous name)
+    EXPECT_THROW(family_with("asp 1 0 0\n5 1 0\n5 2 0\n4 1 a 1 1\n4 1 a 1 2\n0\n", one(d)), std::invalid_argument);
+    // #external x. #show a : x. #show b : x.   (two stored atoms on one atom)
+    EXPECT_THROW(family_with("asp 1 0 0\n5 1 0\n4 1 a 1 1\n4 1 b 1 1\n0\n", one(d)), std::invalid_argument);
+    // {x}. #show x/0. #show a : x.   (defined, shown under a second name)
+    try {
+        family_with("asp 1 0 0\n1 1 1 1 0 0\n4 1 x 1 1\n4 1 a 1 1\n0\n", one(d));
+        FAIL() << "expected an error";
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string::npos, std::string(e.what()).find("'x'"));
+        EXPECT_NE(std::string::npos, std::string(e.what()).find("defined"));
+    }
+    // A fact of one DD that is an atom of another.
+    LoadedDD facts = load_from(compile_aspif("asp 1 0 0\n1 0 1 1 0 0\n4 1 a 0\n0\n"));
+    std::vector<LoadedDD> clash;
+    clash.push_back(facts);
+    clash.push_back(d);
+    EXPECT_THROW(family_with("asp 1 0 0\n0\n", clash), std::invalid_argument);
+    std::reverse(clash.begin(), clash.end());
+    EXPECT_THROW(family_with("asp 1 0 0\n0\n", clash), std::invalid_argument);
+    // A stored fact that is an atom of the program.
+    EXPECT_THROW(family_with("asp 1 0 0\n1 1 1 1 0 0\n4 1 a 1 1\n0\n", one(facts)), std::invalid_argument);
+    // Nothing loaded: the plain compilation.
+    EXPECT_EQ(family_of(compile_aspif(kChoice)), family_with(kChoice, std::vector<LoadedDD>()));
 }
