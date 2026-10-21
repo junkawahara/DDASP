@@ -1,5 +1,6 @@
 #include "ddasp/stored_dd.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <istream>
 #include <map>
@@ -7,6 +8,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 #include "ddasp/dd_util.h"
 
@@ -78,8 +80,8 @@ size_t counted_line(std::istream& is, const char* keyword) {
     std::string prefix = std::string(keyword) + " ";
     if (line.compare(0, prefix.size(), prefix) != 0) throw malformed("expected '" + prefix + "N', got '" + line + "'");
     std::string number = line.substr(prefix.size());
-    if (number.empty() || number.find_first_not_of("0123456789") != std::string::npos) {
-        throw malformed("bad count in '" + line + "'");
+    if (number.empty() || number.size() > 18 || number.find_first_not_of("0123456789") != std::string::npos) {
+        throw malformed("bad count in '" + line + "'");  // at most 18 digits: no strtoull overflow
     }
     return static_cast<size_t>(std::strtoull(number.c_str(), 0, 10));
 }
@@ -191,9 +193,16 @@ StoredDDData read_stored_dd(std::istream& is) {
     } else {
         std::istringstream rest(line);
         size_t size = counted_line(rest, "zdd");
-        dd.payload.resize(size);
-        if (size > 0) is.read(&dd.payload[0], static_cast<std::streamsize>(size));
-        if (static_cast<size_t>(is.gcount()) != size) throw malformed("truncated diagram data");
+        // Read in chunks: the declared size is not trusted before the bytes are there.
+        const size_t chunk = size_t(1) << 20;
+        std::vector<char> buf(std::min(size, chunk));
+        while (dd.payload.size() < size) {
+            size_t want = std::min(chunk, size - dd.payload.size());
+            is.read(&buf[0], static_cast<std::streamsize>(want));
+            size_t got = static_cast<size_t>(is.gcount());
+            if (got == 0) throw malformed("truncated diagram data");
+            dd.payload.append(&buf[0], got);
+        }
     }
     return dd;
 }

@@ -225,6 +225,15 @@ TEST(StoredDD, RejectsMalformedFiles) {
     EXPECT_THROW(parse("ddasp-dd 1\natoms 1\na\nfacts 1\na\nzdd single\n"), std::runtime_error);  // fact = atom
     EXPECT_THROW(parse("ddasp-dd 1\natoms 1\na\nfacts 0\n"), std::runtime_error);         // no diagram
     EXPECT_THROW(parse("ddasp-dd 1\natoms 1\na\nfacts 0\nzdd 100\nBDD"), std::runtime_error);  // truncated
+    // Huge or overflowing sizes are reported as malformed, without allocating them first.
+    for (const char* huge : {"9999999999999", "99999999999999999999", "18446744073709551615"}) {
+        try {
+            parse(std::string("ddasp-dd 1\natoms 1\na\nfacts 0\nzdd ") + huge + "\nBDD");
+            FAIL() << "expected an error for zdd " << huge;
+        } catch (const std::runtime_error& e) {
+            EXPECT_EQ(0u, std::string(e.what()).find("stored DD: ")) << e.what();
+        }
+    }
     StoredDDData garbage = parse("ddasp-dd 1\natoms 1\na\nfacts 0\nzdd 5\nhello");
     EXPECT_THROW(import_stored_dd(garbage), std::runtime_error);
     // A diagram with more levels than atoms.
