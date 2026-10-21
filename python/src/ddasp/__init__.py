@@ -97,6 +97,19 @@ class Observer(_ClingoObserver):
         self._ignored("theory")
 
 
+def _ensure_levels(n: int) -> None:
+    """Make sure the kyotodd instance has variables at levels ``1..n``.
+
+    The binary export of a diagram records only the levels that carry nodes, so
+    importing it creates no variable for the levels above its top node (atoms
+    that are true in no answer set); ``kyotodd.to_var`` would fail for them.
+    """
+    import kyotodd
+
+    while kyotodd.var_count() < n:
+        kyotodd.new_var()
+
+
 class Result:
     """Result of a compilation.
 
@@ -193,11 +206,16 @@ class Result:
     # --- kyotodd objects --------------------------------------------------
     @property
     def zdd(self):
-        """The family of answer sets as a ``kyotodd.ZDD`` (imports lazily)."""
+        """The family of answer sets as a ``kyotodd.ZDD`` (imports lazily).
+
+        The variables of every level in ``levels`` exist afterwards, also those
+        of atoms that are true in no answer set.
+        """
         if self._zdd is None:
             import kyotodd
 
             self._zdd = kyotodd.ZDD.import_binary_str(self._core.zdd_bytes)
+            _ensure_levels(max(self._core.levels, default=0))
         return self._zdd
 
     @property
@@ -207,6 +225,7 @@ class Result:
             import kyotodd
 
             self._bdd = kyotodd.BDD.import_binary_str(self._core.bdd_bytes)
+            _ensure_levels(max(self._core.levels, default=0))
         return self._bdd
 
     def variables(self) -> List[int]:
@@ -359,6 +378,7 @@ class StoredDD:
                 self._zdd = kyotodd.ZDD(1 if self._terminal == 2 else 0)
             else:
                 self._zdd = kyotodd.ZDD.import_binary_str(self._payload)
+            _ensure_levels(len(self._names))
         return self._zdd
 
     @property

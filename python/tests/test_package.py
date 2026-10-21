@@ -107,6 +107,20 @@ def test_order_and_variables():
     assert res_custom.bdd is not None
 
 
+def test_variables_of_atoms_true_in_no_answer_set():
+    # a sits on top of b and is never true: the exported diagram has no node at
+    # its level, so its variable has to be created when the diagram is imported.
+    res = ddasp.compile_text("{a;b}. :- a. #show a/0. #show b/0.")
+    assert [res.level_name(lv) for lv in res.levels] == ["a", "b"]
+    vars_ = res.variables()
+    assert [kyotodd.to_level(v) for v in vars_] == res.levels
+    assert {kyotodd.to_var(lv): res.level_name(lv) for lv in res.levels}
+    assert set(res.answer_sets()) == {frozenset(), frozenset({"b"})}
+    assert res.bdd.count(len(res.levels)) == 2
+    stored = res.stored()
+    assert kyotodd.to_var(len(stored.names)) and stored.count == 2 and stored.zdd.exact_count == 2
+
+
 def test_show_terms():
     res = ddasp.compile_text("{ a }. #show a/0. #show t : a. #show u : not a.")
     assert res.names == {1: "a"}
