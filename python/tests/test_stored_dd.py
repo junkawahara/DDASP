@@ -126,10 +126,15 @@ def test_save_rejects_unnamed_atoms(tmp_path, ddasp_bin):
     proc = _ddasp(ddasp_bin, "--all-atoms", "--save", tmp_path / "out.ddasp", prog)
     assert proc.returncode == 1
     assert "no name" in proc.stderr
-    assert not (tmp_path / "out.ddasp").exists() or (tmp_path / "out.ddasp").stat().st_size == 0
+    assert not (tmp_path / "out.ddasp").exists()
     # With projection every variable is named.
     run_ddasp(ddasp_bin, [prog], "--save", tmp_path / "ok.ddasp")
-    assert (tmp_path / "ok.ddasp").read_bytes().startswith(b"ddasp-dd 1\natoms 1\na\n")
+    ok = (tmp_path / "ok.ddasp").read_bytes()
+    assert ok.startswith(b"ddasp-dd 1\natoms 1\na\n")
+    # A failed --save leaves an existing file as it was.
+    proc = _ddasp(ddasp_bin, "--all-atoms", "--save", tmp_path / "ok.ddasp", prog)
+    assert proc.returncode == 1
+    assert (tmp_path / "ok.ddasp").read_bytes() == ok
 
 
 def test_stats_and_help_mention_stored_dds(tmp_path, ddasp_bin):

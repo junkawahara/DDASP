@@ -447,11 +447,16 @@ int main(int argc, char** argv) {
         }
 
         if (!opt.save_file.empty()) {
+            // The file is opened only once the image is complete, so a result
+            // that cannot be stored leaves an existing file untouched.
+            std::vector<std::string> save_warnings;
+            std::ostringstream image;
+            write_stored_dd(image, res, &save_warnings);
+            for (size_t i = 0; i < save_warnings.size(); ++i) std::cerr << "ddasp: warning: " << save_warnings[i] << "\n";
             std::ofstream out(opt.save_file.c_str(), std::ios::binary);
             if (!out) throw std::runtime_error("cannot open stored DD file for writing: " + opt.save_file);
-            std::vector<std::string> save_warnings;
-            write_stored_dd(out, res, &save_warnings);
-            for (size_t i = 0; i < save_warnings.size(); ++i) std::cerr << "ddasp: warning: " << save_warnings[i] << "\n";
+            out << image.str();
+            if (!out) throw std::runtime_error("cannot write stored DD file: " + opt.save_file);
         }
         return 0;
     } catch (const std::exception& e) {
