@@ -124,12 +124,56 @@ a variable-set BDD (`variable_set`) because `BDD::exist(std::vector)` always
 takes the recursive path, and avoids `ZDD::card()` (recursive) in favour of
 `exact_count()`.
 
+## Stored DDs (`--save` / `--load`)
+
+A *stored DD* (`include/ddasp/stored_dd.h`) is the answer-set family of a
+compilation in one file: a text header with the atom names (top of the
+diagram first) and the fact names, followed by the KyotoDD binary of the ZDD.
+Before the export the family is renamed onto levels 1..N (`rename_zdd`, a
+linear bottom-up rebuild with `getnode` when the renaming keeps the level
+order), so importing it needs exactly N variables; the terminal families are
+written as `zdd empty` / `zdd single` because KyotoDD's export of a terminal
+records every variable of the process. Every stored variable must have a
+primary name, names must be distinct and writable as atoms; terms are dropped
+with a warning, costs are not stored.
+
+Loading a stored DD D into the compilation of a program P is defined as
+adding to P: `#external n.` and `#show n : n.` for every atom name n of D
+(the term show keeps the atom named whatever P's `#show` statements are; it
+does not change the visibility of P's other atoms), the fact `f.` for every
+fact name f of D, and the constraint "X restricted to the atoms of D is a set
+of D". The CLI and `compile_control` ground these declarations together with
+P (a temporary file / the part `ddasp_loaded`); `compile()` on a ground
+`Program` matches the stored names with P's outputs (every output whose
+condition is a single positive atom counts) and adds the atoms P does not
+mention as fresh named `#external` atoms, so they stay free and visible.
+
+Correctness follows from the splitting-set theorem: D is AS(P_old) projected
+onto its shown atoms, P may use those atoms only in bodies (an atom of D in a
+rule head or as a fact of P is an error, as are ambiguous names, two stored
+atoms on one atom of P, and a name that is a fact on one side and an atom on
+the other), and an integrity constraint over x variables does not change
+supportedness or unfoundedness, so `Stable(P ∪ D) = Stable(P) ∧ D`. The
+stored ZDD is renamed onto P's x variables and conjoined with the models
+before the unfounded-set check (it prunes the intermediate BDDs); the result
+is AS(P_old ∪ P) projected onto atoms(D) ∪ shown(P). Hidden atoms of P_old are
+invisible to P, and P's `#external` values are ignored as always.
+
+Variable order: the atoms of each loaded DD keep their stored relative order
+among the positions the heuristic gives them (`apply_spines`, applied before
+the barycenter placement of unnamed atoms; earlier DDs win on shared atoms,
+explicit `--order` atoms are placed first regardless), so the renaming is
+linear; any other order is still correct, only slower.
+
 ## Limits
 
 - KyotoDD supports at most 65536 BDD variables. Every atom of the ground
   program needs one (also with `#show` projection, which happens after the
   stable models are built) and every atom in a non-trivial SCC needs a
-  second one; the compiler reports a clear error beyond that.
+  second one; the compiler reports a clear error beyond that. The atoms of
+  loaded DDs count too.
+- KyotoDD refuses to import diagrams with more than 10^7 nodes or 10^6
+  levels, so such a family can be saved but not loaded.
 - There is no node limit: `bddinit` is called with an unbounded table, so a
   huge intermediate BDD (e.g. a `#count` over 60000 atoms with a bound of
   30000, O(n·k) nodes) uses all the memory of the machine.
@@ -154,3 +198,8 @@ takes the recursive path, and avoids `ZDD::card()` (recursive) in favour of
 - 2026-10-20 (review round 1): every `#show` output is honoured (extra names, negated
   conditions) by keeping the condition atoms as shown atoms; all DDASP traversals are
   non-recursive; `--enumerate` streams from the ZDD.
+- 2026-10-21: stored DDs (`--save` / `--load`, `Result.save()` / `dds=`): one file with
+  the ZDD and the names; loading = declaring every stored atom `#external` (so the new
+  program uses them without declarations and they always stay visible) plus the family
+  as a constraint; atoms the new program defines are errors; stored order is kept in
+  the variable order; costs and terms are not stored.
