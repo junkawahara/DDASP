@@ -164,18 +164,51 @@ struct KeyLess {
     }
 };
 
+typedef std::vector<std::vector<Atom> > Spines;
+
+/**
+ * Make the atoms of every spine (the atoms of a loaded DD, top first) appear
+ * in the spine's order: the positions they occupy in `order` are kept, only
+ * which atom sits at which position changes, so the other atoms do not move.
+ * Atoms of an earlier spine are left where they are. Keeping the stored order
+ * lets the loaded diagram be renamed onto the program's variables in linear time.
+ */
+void apply_spines(std::vector<Atom>& order, const Spines& spines) {
+    if (spines.empty()) return;
+    std::map<Atom, size_t> position;
+    for (size_t i = 0; i < order.size(); ++i) position[order[i]] = i;
+    std::set<Atom> done;
+    for (size_t s = 0; s < spines.size(); ++s) {
+        std::vector<Atom> atoms;
+        std::vector<size_t> positions;
+        for (size_t k = 0; k < spines[s].size(); ++k) {
+            Atom a = spines[s][k];
+            std::map<Atom, size_t>::const_iterator it = position.find(a);
+            if (it == position.end() || !done.insert(a).second) continue;
+            atoms.push_back(a);
+            positions.push_back(it->second);
+        }
+        std::sort(positions.begin(), positions.end());
+        for (size_t j = 0; j < atoms.size(); ++j) {
+            order[positions[j]] = atoms[j];
+            position[atoms[j]] = positions[j];
+        }
+    }
+}
+
 /**
  * NaturalName heuristic: shown atoms sorted by name; every unnamed atom is
  * placed at the average position of the atoms it shares a rule with
  * (two refinement passes so that unnamed atoms can also follow each other).
  */
 std::vector<Atom> natural_name_order(const Program& prog, const std::vector<Atom>& atoms,
-                                     const std::map<Atom, std::string>& names) {
+                                     const std::map<Atom, std::string>& names, const Spines& spines) {
     Atom max_atom = atoms.empty() ? 0 : atoms.back();
     std::vector<Atom> named, unnamed;
     for (size_t i = 0; i < atoms.size(); ++i) (names.count(atoms[i]) ? named : unnamed).push_back(atoms[i]);
     NameLess nl = {&names};
     std::sort(named.begin(), named.end(), nl);
+    apply_spines(named, spines);  // spine atoms are named; before the barycenters are computed
     if (unnamed.empty()) return named;
 
     // An unnamed atom's neighbours are the other atoms of the rules it occurs in
@@ -235,9 +268,13 @@ std::vector<Atom> natural_name_order(const Program& prog, const std::vector<Atom
     return order;
 }
 
-/** Atom order from top to bottom: the user-given order first, then the heuristic order. */
+/**
+ * Atom order from top to bottom: the user-given order first, then the heuristic
+ * order, in which the atoms of every loaded DD keep their stored order (spines).
+ */
 std::vector<Atom> resolve_order(const Program& prog, const std::vector<Atom>& atoms,
-                                const CompileOptions& options, const std::map<Atom, std::string>& names) {
+                                const CompileOptions& options, const std::map<Atom, std::string>& names,
+                                const Spines& spines) {
     std::set<Atom> known(atoms.begin(), atoms.end());
     std::vector<Atom> order;
     std::set<Atom> placed;
@@ -247,7 +284,11 @@ std::vector<Atom> resolve_order(const Program& prog, const std::vector<Atom>& at
         if (placed.insert(a).second) order.push_back(a);
     }
     std::vector<Atom> rest = atoms;
-    if (options.order_heuristic == OrderHeuristic::NaturalName) rest = natural_name_order(prog, atoms, names);
+    if (options.order_heuristic == OrderHeuristic::NaturalName) {
+        rest = natural_name_order(prog, atoms, names, spines);
+    } else {
+        apply_spines(rest, spines);
+    }
     for (size_t i = 0; i < rest.size(); ++i) {
         if (!placed.count(rest[i])) order.push_back(rest[i]);
     }
@@ -726,7 +767,11 @@ CompileResult compile_with(const Program& program, const CompileOptions& options
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     std::set<Atom> shown = collect_names(program, res);
     std::vector<Atom> atoms = collect_atoms(program);
-    std::vector<Atom> order = resolve_order(program, atoms, options, res.names);
+    Spines spines;
+    if (loaded) {
+        for (size_t d = 0; d < loaded->size(); ++d) spines.push_back((*loaded)[d].atoms);
+    }
+    std::vector<Atom> order = resolve_order(program, atoms, options, res.names, spines);
     res.stats.order_time = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     Compiler c(program, order, shown, options, loaded);
     return c.run(res);
@@ -811,6 +856,7 @@ CompileResult compile(const Program& program, const CompileOptions& options, con
                 augmented.add_external(External(a, ExternalValue::Free));
                 augmented.add_output(Output(n, std::vector<Literal>(1, a)));
                 by_name[n].insert(a);
+                externals.insert(a);  // a later DD may share the atom
                 ++synthesized;
             } else if (it->second.size() > 1) {
                 throw load_error("name " + quoted(n) + " is shown for several atoms of the program");

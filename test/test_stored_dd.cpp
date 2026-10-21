@@ -465,3 +465,84 @@ TEST(LoadedDD, RejectsProgramsThatDefineStoredAtoms) {
     // Nothing loaded: the plain compilation.
     EXPECT_EQ(family_of(compile_aspif(kChoice)), family_with(kChoice, std::vector<LoadedDD>()));
 }
+
+// ---------------------------------------------------------------------------
+// Variable order: the atoms of a loaded DD keep their stored relative order.
+
+namespace {
+
+/** Names of the result's variables, top level first, restricted to `of`. */
+std::vector<std::string> var_names(const CompileResult& res, const std::set<std::string>& of) {
+    std::vector<std::string> out;
+    for (size_t i = 0; i < res.vars.size(); ++i) {
+        std::string n = res.atom_name(res.var_to_atom[res.vars[i]]);
+        if (of.count(n)) out.push_back(n);
+    }
+    return out;
+}
+
+std::vector<std::string> names(const char* a, const char* b, const char* c) {
+    std::vector<std::string> v;
+    v.push_back(a);
+    v.push_back(b);
+    v.push_back(c);
+    return v;
+}
+
+}  // namespace
+
+TEST(LoadedDD, StoredOrderIsKeptAmongTheProgramsAtoms) {
+    // Stored with the atom-id order: c on top, then b, then a.
+    CompileOptions by_id;
+    by_id.order_heuristic = OrderHeuristic::AtomId;
+    LoadedDD d = load_from(compile_aspif(
+        "asp 1 0 0\n1 1 3 1 2 3 0 0\n1 0 0 0 2 2 3\n4 1 c 1 1\n4 1 b 1 2\n4 1 a 1 3\n0\n", by_id));
+    ASSERT_EQ(names("c", "b", "a"), d.data.names);
+    // #external a. #external c. p :- a. q :- c.  #show a/0. #show c/0. #show p/0. #show q/0.
+    const char* p_new =
+        "asp 1 0 0\n5 1 0\n5 2 0\n1 0 1 3 0 1 1\n1 0 1 4 0 1 2\n"
+        "4 1 a 1 1\n4 1 c 1 2\n4 1 p 1 3\n4 1 q 1 4\n0\n";
+    CompileResult res = compile(read_aspif_string(p_new), CompileOptions(), one(d));
+    std::set<std::string> stored(d.data.names.begin(), d.data.names.end());
+    EXPECT_EQ(names("c", "b", "a"), var_names(res, stored));  // not the name order a, b, c
+    // The program's own atoms are still sorted by name among themselves.
+    std::set<std::string> own;
+    own.insert("p");
+    own.insert("q");
+    std::vector<std::string> pq;
+    pq.push_back("p");
+    pq.push_back("q");
+    EXPECT_EQ(pq, var_names(res, own));
+    EXPECT_EQ(6u, family_of(res).size());
+
+    // The same with the atom-id heuristic in the new program (a=1, c=2 would put a first).
+    CompileResult by_id_res = compile(read_aspif_string(p_new), by_id, one(d));
+    EXPECT_EQ(names("c", "b", "a"), var_names(by_id_res, stored));
+    EXPECT_EQ(family_of(res), family_of(by_id_res));
+
+    // An explicit order wins over the stored order (the renaming then reorders the diagram).
+    CompileOptions explicit_order;
+    explicit_order.order.push_back(1);  // a on top
+    CompileResult forced = compile(read_aspif_string(p_new), explicit_order, one(d));
+    EXPECT_EQ(names("a", "c", "b"), var_names(forced, stored));
+    EXPECT_EQ(family_of(res), family_of(forced));
+}
+
+TEST(LoadedDD, EarlierDDsWinOnSharedAtoms) {
+    CompileOptions by_id;
+    by_id.order_heuristic = OrderHeuristic::AtomId;
+    // d1 stores [b, a]; d2 stores [a, c, b]  (both with the atom-id order)
+    LoadedDD d1 = load_from(compile_aspif("asp 1 0 0\n1 1 2 1 2 0 0\n4 1 b 1 1\n4 1 a 1 2\n0\n", by_id));
+    LoadedDD d2 = load_from(compile_aspif("asp 1 0 0\n1 1 3 1 2 3 0 0\n4 1 a 1 1\n4 1 c 1 2\n4 1 b 1 3\n0\n", by_id));
+    std::vector<LoadedDD> both;
+    both.push_back(d1);
+    both.push_back(d2);
+    CompileResult res = compile(read_aspif_string("asp 1 0 0\n0\n"), CompileOptions(), both);
+    std::set<std::string> all;
+    all.insert("a");
+    all.insert("b");
+    all.insert("c");
+    // Name order a, b, c; d1 makes it b, a, c; d2 may only move c (its atoms not in d1).
+    EXPECT_EQ(names("b", "a", "c"), var_names(res, all));
+    EXPECT_EQ(8u, family_of(res).size());
+}
