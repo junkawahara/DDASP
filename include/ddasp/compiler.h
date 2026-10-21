@@ -210,7 +210,8 @@ struct LoadedDD;  // stored_dd.h
  * visible in the result. The fact names of D are appended to the result's.
  *
  * @throws std::invalid_argument when a stored atom is defined by the program
- *         (it occurs in a rule head or is a fact), is not #external, has an
+ *         (it occurs in a rule head, except in the auxiliary disjunctions gringo
+ *         emits when it rewrites recursive aggregates, or is a fact), is not #external, has an
  *         ambiguous name, when two stored atoms refer to the same atom of the
  *         program, or when a name is an atom in one place and a fact in another.
  */

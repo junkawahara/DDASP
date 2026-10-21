@@ -7,8 +7,8 @@ that represents the family of *all* its answer sets, using the
 Supported: normal, choice, constraint and disjunctive rules (including non
 head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection
 (including `#show t : not a.` style terms), `#minimize` (optimal answer sets
-only, or cost functions), `#external` atoms (kept as free variables; their
-initial value is ignored). `#project`, `#heuristic`, assumptions, edges and
+only, or cost functions), `#external` atoms (kept as free variables unless a
+rule defines them, as in clingo; their initial value is ignored). `#project`, `#heuristic`, assumptions, edges and
 theory atoms are ignored with a warning.
 
 **New to ASP or DDASP?** Read the beginner's guide (Japanese):

@@ -21,6 +21,9 @@ INLINE_PROGRAMS = {
     "sum_in_body": "{ p(1..3) }. q :- 3 <= #sum{ X : p(X) }. #show p/1. #show q/0.",
     "choice_bounds": "1 { p(1..4) } 2. #show p/1.",
     "external": "#external e. a :- e. b :- not e. #show a/0. #show b/0.",
+    "external_defined_by_a_rule": "#external e. { a }. e :- a. #show a/0. #show e/0.",
+    "external_in_rewritten_aggregate": "#external e. { d }. g :- #sum{ -2,e0 : e; -3,g1 : g; 2,d2 : d } >= 0. "
+                                       "#show d/0. #show e/0. #show g/0.",
     "inconsistent": "a. :- a.",
     "hidden_atoms": "{ a; b }. c :- a. #show c/0.",
     "nested_negation": "{ a }. b :- not not a. #show a/0. #show b/0.",

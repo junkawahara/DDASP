@@ -466,6 +466,38 @@ TEST(LoadedDD, RejectsProgramsThatDefineStoredAtoms) {
     EXPECT_EQ(family_of(compile_aspif(kChoice)), family_with(kChoice, std::vector<LoadedDD>()));
 }
 
+TEST(LoadedDD, AcceptsGringosAuxiliaryDisjunctions) {
+    // {a}. #show a/0.
+    LoadedDD d = load_from(compile_aspif("asp 1 0 0\n1 1 1 1 0 0\n4 1 a 1 1\n0\n"));
+    // #external a. #show a : a.  j :- #count{ a : a; j : not j } != 1. #show j/0.
+    // gringo rewrites the recursive aggregate with `aux5 | a :- not aux6` and `aux5 :- not a`.
+    const char* rules =
+        "1 0 1 3 0 1 2\n"
+        "1 0 1 4 1 2 2 1 1 -3 1\n"
+        "1 0 1 5 0 1 -1\n"
+        "1 0 1 5 0 1 4\n"
+        "1 0 1 6 0 1 -4\n"
+        "1 0 2 5 1 0 1 -6\n"
+        "1 0 1 7 0 1 -3\n"
+        "1 0 1 4 1 2 2 -7 1 5 1\n"
+        "1 0 1 2 0 1 4\n"
+        "4 1 j 1 3\n"
+        "4 1 a 1 1\n"
+        "0\n";
+    NameFamily got = family_with(std::string("asp 1 0 0\n5 1 2\n") + rules, one(d));
+    NameFamily expected;
+    expected.insert(N());
+    expected.insert(N("j"));
+    EXPECT_EQ(expected, got);
+    // The same as the combined program {a}. + the rules (a never becomes true).
+    EXPECT_EQ(expected, family_plain(std::string("asp 1 0 0\n1 1 1 1 0 0\n") + rules));
+    // A loaded atom in a disjunction without the complementary rule is a definition.
+    EXPECT_THROW(family_with("asp 1 0 0\n5 1 0\n1 0 2 2 1 0 0\n4 1 a 1 1\n0\n", one(d)), std::invalid_argument);
+    // ... and so is one whose other head atom is named (x :- not a. x | a.).
+    EXPECT_THROW(family_with("asp 1 0 0\n5 1 0\n1 0 1 2 0 1 -1\n1 0 2 2 1 0 0\n4 1 a 1 1\n4 1 x 1 2\n0\n", one(d)),
+                 std::invalid_argument);
+}
+
 // ---------------------------------------------------------------------------
 // Variable order: the atoms of a loaded DD keep their stored relative order.
 

@@ -37,7 +37,10 @@ release; `u_a` plays the role of `a ∈ X \ Y`.)
   programming over the literal list (`threshold_bdd`), processing the
   literals from the top level down.
 - `#external a` is treated as the choice rule `{a}.`; its initial value
-  (true/false/free/release) is ignored, the atom is always free.
+  (true/false/free/release) is ignored, the atom is always free. When a rule
+  has `a` in the head, the declaration is ignored (as in clingo, where such an
+  atom is no longer external): `#external e. {a}. e :- a.` has the answer sets
+  `{}` and `{a, e}` only.
 - `#project` statements are read but ignored.
 
 ## Stable model semantics: SCC-local unfounded sets (default, `--method scc`)
@@ -167,6 +170,12 @@ rule head or as a fact of P is an error, as are ambiguous names, two stored
 atoms on one atom of P, and a name that is a fact on one side and an atom on
 the other), and an integrity constraint over x variables does not change
 supportedness or unfoundedness, so `Stable(P ∪ D) = Stable(P) ∧ D`. The
+loaded atoms are free in the compilation whatever rules mention them. One
+head occurrence is allowed: when gringo rewrites a recursive aggregate with
+`!=` or negative weights, it emits `aux | a :- B` together with `aux :- not a`
+for an atom `a` of the aggregate (`aux` unnamed); given the second rule the
+first can never support `a`, so it is accepted (`defined_atoms` in
+`src/compiler.cpp`). The
 stored ZDD is renamed onto P's x variables and conjoined with the models
 before the unfounded-set check (it prunes the intermediate BDDs); the result
 is AS(P_old ∪ P) projected onto atoms(D) ∪ shown(P). Hidden atoms of P_old are

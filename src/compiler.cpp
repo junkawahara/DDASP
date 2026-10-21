@@ -361,7 +361,7 @@ BDD conjoin_sorted(std::vector<Part>& parts) {
     BDD f = BDD::True;
     size_t done = 0;
     while (done < P) {
-        if (ready.empty()) {  // cannot happen (see above); conjoin the rest in index order
+        if (ready.empty()) {  // cannot happen (see above); conjoin the rest in top-level order
             for (size_t i = 0; i < P; ++i) {
                 if (pending[i] > 0) {
                     pending[i] = 0;
@@ -456,7 +456,9 @@ std::vector<std::vector<Atom> > tarjan_sccs(const std::vector<std::vector<Atom> 
 /**
  * Dependency component of every atom: the strongly connected components of the
  * graph with an edge from every body atom (positive or negative) to every head
- * atom of a rule. Used to order the conjunction of the constraints.
+ * atom of a rule, and with the head atoms of a disjunctive rule in one cycle
+ * (the support of each of them depends on the others being false). Used to
+ * order the conjunction of the constraints.
  */
 std::vector<size_t> dependency_components(const Program& prog, Atom max_atom) {
     std::vector<std::vector<Atom> > succ(max_atom + 1);
@@ -465,6 +467,9 @@ std::vector<size_t> dependency_components(const Program& prog, Atom max_atom) {
         for (size_t i = 0; i < rule.body.lits.size(); ++i) {
             Atom b = atom_of(rule.body.lits[i].lit);
             for (size_t h = 0; h < rule.head.size(); ++h) succ[b].push_back(rule.head[h]);
+        }
+        if (rule.head_type == HeadType::Disjunction && rule.head.size() > 1) {
+            for (size_t h = 0; h < rule.head.size(); ++h) succ[rule.head[h]].push_back(rule.head[(h + 1) % rule.head.size()]);
         }
     }
     std::vector<std::vector<Atom> > sccs = tarjan_sccs(succ, max_atom);
@@ -669,8 +674,21 @@ private:
             const Rule& rule = prog_.rules()[r];
             for (size_t h = 0; h < rule.head.size(); ++h) rules_of_head_[rule.head[h]].push_back(r);
         }
+        // An atom is free when it is declared #external and no rule has it in
+        // the head (as in clingo, a rule overrides the declaration), or when it
+        // comes from a loaded DD (constrained by the DD only; the auxiliary
+        // disjunctions gringo may put it in never support it, see compile()).
         is_external_.assign(max_atom + 1, false);
-        for (size_t e = 0; e < prog_.externals().size(); ++e) is_external_[prog_.externals()[e].atom] = true;
+        for (size_t e = 0; e < prog_.externals().size(); ++e) {
+            Atom a = prog_.externals()[e].atom;
+            if (rules_of_head_[a].empty()) is_external_[a] = true;
+        }
+        if (loaded_) {
+            for (size_t d = 0; d < loaded_->size(); ++d) {
+                const std::vector<Atom>& atoms = (*loaded_)[d].atoms;
+                for (size_t k = 0; k < atoms.size(); ++k) is_external_[atoms[k]] = true;
+            }
+        }
     }
 
     BDD x_of(Atom a) const { return BDD::prime(atom_to_var_[a]); }
@@ -753,8 +771,9 @@ private:
 
     /**
      * Supported(X): every atom a ∈ X has a rule with a in the head whose body is
-     * true in X and whose other head atoms are false in X (external atoms are
-     * always supported). This is the unfounded-set condition for singleton sets.
+     * true in X and whose other head atoms are false in X (free atoms, see
+     * index_rules, are always supported). This is the unfounded-set condition
+     * for singleton sets.
      */
     void build_supported(std::vector<Part>& parts) const {
         LitX lx = {this};
@@ -846,7 +865,8 @@ private:
                 parts.push_back(~body | ~head_in_u | head_outside_u_in_x);
             }
         }
-        // #external a is treated as the choice rule {a}: a can never be unfounded.
+        // A free atom (#external without rules, loaded) behaves as the choice
+        // rule {a}: it can never be unfounded.
         for (size_t i = 0; i < group_atoms.size(); ++i) {
             if (is_external_[group_atoms[i]]) parts.push_back(~u_of(group_atoms[i]));
         }
@@ -942,6 +962,38 @@ std::map<std::string, std::set<Atom> > atoms_by_name(const Program& prog) {
     return by_name;
 }
 
+/**
+ * Atoms defined by the program: the head atoms of its rules, except in the
+ * auxiliary disjunctions gringo emits when it rewrites a recursive aggregate
+ * (`!=`, negative weights): `aux | a :- B` together with `aux :- not a`, aux
+ * being an unnamed atom. Given the second rule, the first can never be the
+ * support of a (aux is true whenever a is false, and gringo's rewriting makes
+ * aux true whenever B is), so an atom of a loaded DD may occur in it.
+ */
+std::set<Atom> defined_atoms(const Program& prog, const std::map<Atom, std::string>& primary) {
+    std::set<std::pair<Atom, Atom> > complement;  // (aux, a) for every rule aux :- not a
+    for (size_t r = 0; r < prog.rules().size(); ++r) {
+        const Rule& rule = prog.rules()[r];
+        if (rule.head_type == HeadType::Disjunction && rule.head.size() == 1 && rule.body.type == BodyType::Normal &&
+            rule.body.lits.size() == 1 && !is_positive(rule.body.lits[0].lit)) {
+            complement.insert(std::make_pair(rule.head[0], atom_of(rule.body.lits[0].lit)));
+        }
+    }
+    std::set<Atom> defined;
+    for (size_t r = 0; r < prog.rules().size(); ++r) {
+        const Rule& rule = prog.rules()[r];
+        for (size_t h = 0; h < rule.head.size(); ++h) {
+            Atom a = rule.head[h];
+            if (rule.head_type == HeadType::Disjunction && rule.head.size() == 2) {
+                Atom aux = rule.head[1 - h];
+                if (!primary.count(aux) && complement.count(std::make_pair(aux, a))) continue;
+            }
+            defined.insert(a);
+        }
+    }
+    return defined;
+}
+
 std::string quoted(const std::string& s) { return "'" + s + "'"; }
 
 std::invalid_argument load_error(const std::string& what) { return std::invalid_argument("loaded DD: " + what); }
@@ -978,14 +1030,10 @@ CompileResult compile(const Program& program, const CompileOptions& options, con
         }
     }
 
-    std::set<Atom> heads;
-    for (size_t r = 0; r < program.rules().size(); ++r) {
-        const Rule& rule = program.rules()[r];
-        heads.insert(rule.head.begin(), rule.head.end());
-    }
+    std::map<Atom, std::string> primary = atom_names(program);
+    std::set<Atom> heads = defined_atoms(program, primary);
     std::set<Atom> externals;
     for (size_t e = 0; e < program.externals().size(); ++e) externals.insert(program.externals()[e].atom);
-    std::map<Atom, std::string> primary = atom_names(program);
 
     // Match every stored atom with an atom of the program; the atoms the program
     // does not mention become fresh #external atoms of a copy of the program.

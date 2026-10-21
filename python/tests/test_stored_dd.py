@@ -170,6 +170,24 @@ def test_python_result_as_stored_dd_matches_the_combined_program(tmp_path):
     assert ddasp.compile_files([fix], dds=[path.read_bytes()]).count == 12
 
 
+@pytest.mark.parametrize(
+    "second",
+    [
+        "j :- #count{ a : a; j : not j } != 1. #show j/0.",
+        "j :- #sum{ 1,a : a; 1,j : j } != 1. #show j/0.",
+        "{ b }. j :- #sum{ -1,a : a; 1,b : b; 1,j : not j } >= 0. #show b/0. #show j/0.",
+    ],
+)
+def test_recursive_aggregates_over_stored_atoms(tmp_path, second):
+    # gringo rewrites these aggregates with an auxiliary disjunction that has
+    # the stored atom in its head; that is not a definition of the atom.
+    first = "{ a }. #show a/0."
+    base = ddasp.compile_text(first).stored()
+    res = ddasp.compile_text(second, dds=[base])
+    p1, p2 = _write(tmp_path, "p1.lp", first), _write(tmp_path, "p2.lp", second)
+    assert set(res.answer_sets()) == set(clingo_answer_sets([p1, p2], project=True))
+
+
 def test_python_save_and_load_round_trip(tmp_path):
     res = ddasp.compile_text("f. {p(1..3)} 2. #show f/0. #show p/1.")
     path = tmp_path / "p.ddasp"

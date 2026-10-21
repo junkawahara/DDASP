@@ -189,6 +189,13 @@ TEST(Compiler, ExternalIsFree) {
     EXPECT_EQ(F(S(), S(1, 2)), compile_family("asp 1 0 0\n5 1 0\n1 0 1 2 0 1 1\n0\n"));
 }
 
+TEST(Compiler, ExternalDefinedByARuleIsNotFree) {
+    // #external e. {a}. e :- a.   (as in clingo, the rule overrides the declaration: no {e})
+    EXPECT_EQ(F(S(), S(1, 2)), compile_family("asp 1 0 0\n1 1 1 1 0 0\n1 0 1 2 0 1 1\n5 2 2\n0\n"));
+    // #external e. {e}.   (a choice rule defines e as well; the family is the same)
+    EXPECT_EQ(F(S(), S(1)), compile_family("asp 1 0 0\n1 1 1 1 0 0\n5 1 0\n0\n"));
+}
+
 TEST(Compiler, UnsupportedAtomInBodyOnly) {
     // a :- b.   (b has no rule)
     EXPECT_EQ(F(S()), compile_family("asp 1 0 0\n1 0 1 1 0 1 2\n0\n"));
