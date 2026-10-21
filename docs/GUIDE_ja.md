@@ -819,10 +819,8 @@ smallest = ddasp.compile_files(["examples/independent_set_maximal.lp"], dds=[fir
 smallest.count, smallest.optimum                                              # (2, [4])
 ```
 
-注意: `size(S) :- S = #count { V : in(V) }.` のように、取りうる値が多い集約を多数の保存原子に
-対して書くと、値ごとに重み付きルールができるため現在の実装では非常に時間がかかります
-(16 頂点で数十秒)。個数が欲しいだけなら、`#minimize` や 11 章の ZDD 演算
-(`z.size_le(k)` など)を使ってください。
+2 段階目で `size(S) :- S = #count { V : in(V) }. #show size/1.` と書けば、各極大独立集合に
+その大きさを付けることもできます(16 頂点なら一瞬で終わります)。
 
 ### 12.2 KyotoDD で作った DD を ASP から使う(`examples/shift_dd.py`, `examples/shift.lp`)
 

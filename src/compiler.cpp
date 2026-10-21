@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <functional>
+#include <queue>
 #include <set>
 #include <stdexcept>
 
@@ -295,43 +297,101 @@ std::vector<Atom> resolve_order(const Program& prog, const std::vector<Atom>& at
     return order;
 }
 
-/** Conjoin BDDs in increasing order of their top level, which keeps intermediate results local. */
-BDD conjoin_sorted(std::vector<BDD>& parts) {
-    struct TopLess {
-        bool operator()(const BDD& a, const BDD& b) const {
-            bddvar la = a.is_terminal() ? 0 : kyotodd::bddlevofvar(a.top());
-            bddvar lb = b.is_terminal() ? 0 : kyotodd::bddlevofvar(b.top());
-            return la < lb;
-        }
-    };
-    std::stable_sort(parts.begin(), parts.end(), TopLess());
-    BDD f = BDD::True;
-    for (size_t i = 0; i < parts.size(); ++i) f &= parts[i];
-    return f;
-}
+/**
+ * A constraint to be conjoined. `defines` are the atoms whose definition the
+ * constraint is part of (the head atoms of a rule, the atom of a support
+ * constraint); `uses` are the other atoms it mentions, except those in the
+ * same dependency component as a defined atom.
+ */
+struct Part {
+    BDD bdd;
+    std::vector<Atom> defines;
+    std::vector<Atom> uses;
+};
 
 /**
- * Non-trivial strongly connected components of the positive dependency graph
- * (edge b -> h for every rule with b a positive body atom and h a head atom).
- * A component is non-trivial if it has more than one atom or a self-loop.
- * Returned as lists of atoms; the order of components is unspecified.
+ * Conjoin the parts so that every atom's defining parts come before the parts
+ * that use the atom and, among the parts whose used atoms are all defined, in
+ * increasing order of their top level. The first rule keeps an intermediate
+ * result from having to remember the values of atoms whose definitions are
+ * still missing (which is exponential in their number); the second keeps the
+ * intermediate results local. Atoms without defining parts (choice atoms,
+ * externals) never block, and `uses` excludes the atoms of one dependency
+ * component, so the order always exists.
  */
-std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_atom) {
-    std::vector<std::vector<Atom> > succ(max_atom + 1);
-    std::vector<bool> self_loop(max_atom + 1, false);
-    for (size_t r = 0; r < prog.rules().size(); ++r) {
-        const Rule& rule = prog.rules()[r];
-        for (size_t i = 0; i < rule.body.lits.size(); ++i) {
-            Literal l = rule.body.lits[i].lit;
-            if (!is_positive(l)) continue;
-            for (size_t h = 0; h < rule.head.size(); ++h) {
-                succ[l].push_back(rule.head[h]);
-                if (rule.head[h] == l) self_loop[l] = true;
+BDD conjoin_sorted(std::vector<Part>& parts) {
+    const size_t P = parts.size();
+    Atom max_atom = 0;
+    for (size_t i = 0; i < P; ++i) {
+        for (size_t k = 0; k < parts[i].defines.size(); ++k) max_atom = std::max(max_atom, parts[i].defines[k]);
+        for (size_t k = 0; k < parts[i].uses.size(); ++k) max_atom = std::max(max_atom, parts[i].uses[k]);
+    }
+    std::vector<size_t> remaining_defs(max_atom + 1, 0);
+    for (size_t i = 0; i < P; ++i) {
+        for (size_t k = 0; k < parts[i].defines.size(); ++k) ++remaining_defs[parts[i].defines[k]];
+    }
+    std::vector<std::vector<size_t> > users(max_atom + 1);
+    std::vector<size_t> pending(P, 0);
+    for (size_t i = 0; i < P; ++i) {
+        std::vector<Atom>& u = parts[i].uses;
+        std::sort(u.begin(), u.end());
+        u.erase(std::unique(u.begin(), u.end()), u.end());
+        for (size_t k = 0; k < u.size(); ++k) {
+            if (remaining_defs[u[k]] > 0) {
+                users[u[k]].push_back(i);
+                ++pending[i];
             }
         }
     }
+    // Ready parts, lowest top level first (then by index, for a deterministic order).
+    typedef std::pair<bddvar, size_t> Key;
+    std::priority_queue<Key, std::vector<Key>, std::greater<Key> > ready;
+    for (size_t i = 0; i < P; ++i) {
+        if (pending[i] == 0) ready.push(Key(parts[i].bdd.is_terminal() ? 0 : kyotodd::bddlevofvar(parts[i].bdd.top()), i));
+    }
+    BDD f = BDD::True;
+    size_t done = 0;
+    while (done < P) {
+        if (ready.empty()) {  // cannot happen (see above); conjoin the rest in index order
+            for (size_t i = 0; i < P; ++i) {
+                if (pending[i] > 0) {
+                    pending[i] = 0;
+                    ready.push(Key(parts[i].bdd.is_terminal() ? 0 : kyotodd::bddlevofvar(parts[i].bdd.top()), i));
+                }
+            }
+        }
+        size_t i = ready.top().second;
+        ready.pop();
+        f &= parts[i].bdd;
+        parts[i].bdd = BDD();
+        ++done;
+        for (size_t k = 0; k < parts[i].defines.size(); ++k) {
+            Atom a = parts[i].defines[k];
+            if (--remaining_defs[a] != 0) continue;
+            for (size_t j = 0; j < users[a].size(); ++j) {
+                size_t user = users[a][j];
+                if (pending[user] > 0 && --pending[user] == 0) {
+                    ready.push(Key(parts[user].bdd.is_terminal() ? 0 : kyotodd::bddlevofvar(parts[user].bdd.top()), user));
+                }
+            }
+        }
+    }
+    return f;
+}
 
-    // Iterative Tarjan.
+/** Conjoin BDDs in increasing order of their top level (no dependencies). */
+BDD conjoin_sorted(std::vector<BDD>& bdds) {
+    std::vector<Part> parts(bdds.size());
+    for (size_t i = 0; i < bdds.size(); ++i) parts[i].bdd = bdds[i];
+    return conjoin_sorted(parts);
+}
+
+/**
+ * Strongly connected components of the graph `succ` on the atoms 1..max_atom,
+ * in reverse topological order (a component comes after every component
+ * reachable from it). Iterative Tarjan.
+ */
+std::vector<std::vector<Atom> > tarjan_sccs(const std::vector<std::vector<Atom> >& succ, Atom max_atom) {
     std::vector<int> index(max_atom + 1, -1), lowlink(max_atom + 1, 0);
     std::vector<bool> on_stack(max_atom + 1, false);
     std::vector<Atom> stack;
@@ -374,7 +434,7 @@ std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_at
                     on_stack[w] = false;
                     comp.push_back(w);
                 } while (w != v);
-                if (comp.size() > 1 || self_loop[v]) sccs.push_back(comp);
+                sccs.push_back(comp);
             }
             call.pop_back();
             if (!call.empty()) {
@@ -382,6 +442,55 @@ std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_at
                 lowlink[parent] = std::min(lowlink[parent], lowlink[v]);
             }
         }
+    }
+    return sccs;
+}
+
+/**
+ * Dependency component of every atom: the strongly connected components of the
+ * graph with an edge from every body atom (positive or negative) to every head
+ * atom of a rule. Used to order the conjunction of the constraints.
+ */
+std::vector<size_t> dependency_components(const Program& prog, Atom max_atom) {
+    std::vector<std::vector<Atom> > succ(max_atom + 1);
+    for (size_t r = 0; r < prog.rules().size(); ++r) {
+        const Rule& rule = prog.rules()[r];
+        for (size_t i = 0; i < rule.body.lits.size(); ++i) {
+            Atom b = atom_of(rule.body.lits[i].lit);
+            for (size_t h = 0; h < rule.head.size(); ++h) succ[b].push_back(rule.head[h]);
+        }
+    }
+    std::vector<std::vector<Atom> > sccs = tarjan_sccs(succ, max_atom);
+    std::vector<size_t> comp(max_atom + 1, 0);
+    for (size_t c = 0; c < sccs.size(); ++c) {
+        for (size_t i = 0; i < sccs[c].size(); ++i) comp[sccs[c][i]] = c;
+    }
+    return comp;
+}
+
+/**
+ * Non-trivial strongly connected components of the positive dependency graph
+ * (edge b -> h for every rule with b a positive body atom and h a head atom).
+ * A component is non-trivial if it has more than one atom or a self-loop.
+ * Returned as lists of atoms; the order of components is unspecified.
+ */
+std::vector<std::vector<Atom> > nontrivial_sccs(const Program& prog, Atom max_atom) {
+    std::vector<std::vector<Atom> > succ(max_atom + 1);
+    std::vector<bool> self_loop(max_atom + 1, false);
+    for (size_t r = 0; r < prog.rules().size(); ++r) {
+        const Rule& rule = prog.rules()[r];
+        for (size_t i = 0; i < rule.body.lits.size(); ++i) {
+            Literal l = rule.body.lits[i].lit;
+            if (!is_positive(l)) continue;
+            for (size_t h = 0; h < rule.head.size(); ++h) {
+                succ[l].push_back(rule.head[h]);
+                if (rule.head[h] == l) self_loop[l] = true;
+            }
+        }
+    }
+    std::vector<std::vector<Atom> > all = tarjan_sccs(succ, max_atom), sccs;
+    for (size_t c = 0; c < all.size(); ++c) {
+        if (all[c].size() > 1 || self_loop[all[c][0]]) sccs.push_back(all[c]);
     }
     return sccs;
 }
@@ -424,6 +533,7 @@ public:
         }
         allocate_variables(max_atom);
         index_rules(max_atom);
+        comp_ = dependency_components(prog_, max_atom);
     }
 
     CompileResult run(CompileResult& res) {
@@ -435,7 +545,7 @@ public:
         for (size_t i = 0; i < in_group_.size(); ++i) st.aux_vars += in_group_[i] ? 1 : 0;
 
         Timer t;
-        std::vector<BDD> parts;
+        std::vector<Part> parts;
         build_models(parts);
         st.models_time = t.lap();
         if (options_.method == Method::Scc) {
@@ -598,15 +708,39 @@ private:
         BDD operator()(Literal l) const { return c->lit_reduct(l, *group); }
     };
 
+    /** Whether atom a is in the dependency component of one of the atoms. */
+    bool same_component(Atom a, const std::vector<Atom>& atoms) const {
+        for (size_t i = 0; i < atoms.size(); ++i) {
+            if (comp_[atoms[i]] == comp_[a]) return true;
+        }
+        return false;
+    }
+
+    /** Add a part defining `defines` and mentioning the body atoms of `rule` (and `extra`). */
+    void add_part(std::vector<Part>& parts, const BDD& bdd, const std::vector<Atom>& defines, const Rule& rule,
+                  const std::vector<Atom>& extra = std::vector<Atom>()) const {
+        Part p;
+        p.bdd = bdd;
+        p.defines = defines;
+        for (size_t i = 0; i < rule.body.lits.size(); ++i) {
+            Atom a = atom_of(rule.body.lits[i].lit);
+            if (!same_component(a, defines)) p.uses.push_back(a);
+        }
+        for (size_t i = 0; i < extra.size(); ++i) {
+            if (!same_component(extra[i], defines)) p.uses.push_back(extra[i]);
+        }
+        parts.push_back(p);
+    }
+
     /** Models(X): X satisfies every rule classically (choice rules impose nothing). */
-    void build_models(std::vector<BDD>& parts) const {
+    void build_models(std::vector<Part>& parts) const {
         LitX lx = {this};
         for (size_t r = 0; r < prog_.rules().size(); ++r) {
             const Rule& rule = prog_.rules()[r];
             if (rule.head_type == HeadType::Choice) continue;
             BDD head = BDD::False;
             for (size_t i = 0; i < rule.head.size(); ++i) head |= x_of(rule.head[i]);
-            parts.push_back(~body_bdd(rule.body, lx) | head);
+            add_part(parts, ~body_bdd(rule.body, lx) | head, rule.head, rule);
         }
     }
 
@@ -615,24 +749,33 @@ private:
      * true in X and whose other head atoms are false in X (external atoms are
      * always supported). This is the unfounded-set condition for singleton sets.
      */
-    void build_supported(std::vector<BDD>& parts) const {
+    void build_supported(std::vector<Part>& parts) const {
         LitX lx = {this};
         for (size_t i = 0; i < order_.size(); ++i) {
             Atom a = order_[i];
             if (is_external_[a]) continue;
             BDD support = BDD::False;
+            Part p;
+            p.defines.push_back(a);
             const std::vector<size_t>& rs = rules_of_head_[a];
             for (size_t k = 0; k < rs.size(); ++k) {
                 const Rule& rule = prog_.rules()[rs[k]];
                 BDD s = body_bdd(rule.body, lx);
+                for (size_t j = 0; j < rule.body.lits.size(); ++j) {
+                    Atom b = atom_of(rule.body.lits[j].lit);
+                    if (comp_[b] != comp_[a]) p.uses.push_back(b);
+                }
                 if (rule.head_type == HeadType::Disjunction) {
                     for (size_t h = 0; h < rule.head.size(); ++h) {
-                        if (rule.head[h] != a) s &= ~x_of(rule.head[h]);
+                        if (rule.head[h] == a) continue;
+                        s &= ~x_of(rule.head[h]);
+                        if (comp_[rule.head[h]] != comp_[a]) p.uses.push_back(rule.head[h]);
                     }
                 }
                 support |= s;
             }
-            parts.push_back(~x_of(a) | support);
+            p.bdd = ~x_of(a) | support;
+            parts.push_back(p);
         }
     }
 
@@ -641,13 +784,16 @@ private:
      * of its family. Being integrity constraints over X only, they can be
      * conjoined with Models(X) before the unfounded sets are considered.
      */
-    void build_loaded(std::vector<BDD>& parts) const {
+    void build_loaded(std::vector<Part>& parts) const {
         for (size_t d = 0; d < loaded_->size(); ++d) {
             const LoadedTarget& target = (*loaded_)[d];
             std::vector<bddvar> to(target.atoms.size());
             for (size_t k = 0; k < to.size(); ++k) to[k] = atom_to_var_[target.atoms[k]];
             ZDD family = rename_zdd(target.dd->zdd, target.dd->vars, to);
-            parts.push_back(zdd_to_bdd_over(family, to));  // atoms never true in the family are false
+            Part p;
+            p.bdd = zdd_to_bdd_over(family, to);  // atoms never true in the family are false
+            p.uses = target.atoms;
+            parts.push_back(p);
         }
     }
 
@@ -757,6 +903,7 @@ private:
     std::vector<bddvar> atom_to_uvar_;
     std::vector<Atom> var_to_atom_;
     std::vector<std::vector<size_t> > rules_of_head_;
+    std::vector<size_t> comp_;  ///< dependency component of every atom (dependency_components)
     std::vector<bool> is_external_;
     const std::vector<LoadedTarget>* loaded_;
 };

@@ -74,9 +74,20 @@ enumeration.
   comparison (`q(1,2) < q(1,10)`), unnamed atoms placed at the barycenter of the
   atoms they share rules with (two refinement passes). `--order id` keeps
   gringo's numbering. `CompileOptions::order` lists atoms to put on top.
-- All per-rule and per-atom constraints are conjoined in increasing order of
-  their top level (`conjoin_sorted`). On 8-queens this plus the name order took
-  the compilation from 27 s / 34M peak nodes to 0.02 s / 92k peak nodes.
+- All per-rule and per-atom constraints are conjoined definitions first
+  (`conjoin_sorted`): a constraint that mentions an atom waits until every
+  constraint defining that atom (the rules with it in the head, its support
+  constraint) has been conjoined, and among the constraints that are ready the
+  one with the lowest top level goes first. Dependencies are taken across the
+  strongly connected components of the full (positive and negative) dependency
+  graph only, so cyclic definitions never block, and choice / external atoms
+  have no defining constraints. Without the dependency rule, an intermediate
+  result had to carry the values of atoms whose definitions were still
+  missing: `size(S) :- S = #count { V : in(V) }` over 16 shown atoms took 11M
+  nodes and 20 s (the `size ↔ aux` constraints came first because their top
+  levels were lowest), now 70k nodes and 0.03 s. The top-level rule alone
+  already took 8-queens from 27 s / 34M peak nodes to 0.02 s / 92k, and the
+  dependency rule leaves that unchanged.
 
 ## #show projection (default on)
 
@@ -215,3 +226,6 @@ linear; any other order is still correct, only slower.
   the variable order; costs and terms are not stored.
 - 2026-10-22: `StoredDD.from_zdd` / `write_stored_dd_data`: a DD built directly with
   KyotoDD becomes a stored DD and so a constraint of an ASP program (guide chapter 12).
+- 2026-10-22: constraints are conjoined definitions first (dependency order across SCCs,
+  lowest top level among the ready ones); fixes the blow-up of value-rich aggregates
+  (`#count` into a derived atom) over many shown or stored atoms.
