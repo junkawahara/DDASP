@@ -158,6 +158,17 @@ before the unfounded-set check (it prunes the intermediate BDDs); the result
 is AS(P_old ∪ P) projected onto atoms(D) ∪ shown(P). Hidden atoms of P_old are
 invisible to P, and P's `#external` values are ignored as always.
 
+`write_stored_dd_data` writes a stored DD from its parts (names, fact names,
+ZDD bytes or a terminal marker) with the same validation, so diagrams that did
+not come from a compilation can be stored. The Python `StoredDD.from_zdd(zdd,
+names)` uses it for a `kyotodd.ZDD` (the kyotodd module's node table is
+separate from the extension's, so the ZDD crosses over as its binary export):
+the named variables must sit at levels 1..N of the user's instance and every
+variable of the ZDD must be named; the names are written top of the diagram
+first. Examples: `examples/shift_dd.py` + `examples/shift.lp` (a KyotoDD-built
+family as an ASP constraint) and `examples/independent_set_maximal.lp` (a
+second ASP step on a stored DD).
+
 Variable order: the atoms of each loaded DD keep their stored relative order
 among the positions the heuristic gives them (`apply_spines`, applied before
 the barycenter placement of unnamed atoms; earlier DDs win on shared atoms,
@@ -202,3 +213,5 @@ linear; any other order is still correct, only slower.
   program uses them without declarations and they always stay visible) plus the family
   as a constraint; atoms the new program defines are errors; stored order is kept in
   the variable order; costs and terms are not stored.
+- 2026-10-22: `StoredDD.from_zdd` / `write_stored_dd_data`: a DD built directly with
+  KyotoDD becomes a stored DD and so a constraint of an ASP program (guide chapter 12).

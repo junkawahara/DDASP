@@ -88,6 +88,7 @@ res.zdd                       # kyotodd.ZDD (variables: level_to_atom / names)
 res = ddasp.compile_files(["prog.lp"], optimize=True); res.optimum
 res.save("prog.ddasp")        # stored DD (ZDD + names), also ddasp --save / --load
 more = ddasp.compile_text(":- a. q :- b. #show q/0.", dds=[ddasp.load("prog.ddasp")])
+dd = ddasp.StoredDD.from_zdd(zdd, {1: "a", 2: "b"})   # a family built with kyotodd, as a stored DD
 ```
 
 `ddasp.Program` can also be filled by hand or from aspif text

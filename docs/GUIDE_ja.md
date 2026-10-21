@@ -20,7 +20,8 @@ ASP の文法は、このガイドで使う範囲を順に説明します。よ�
 9. [コマンドラインオプション一覧](#9-コマンドラインオプション一覧)
 10. [Python から使う](#10-python-から使う)
 11. [ZDD を KyotoDD で活用する](#11-zdd-を-kyotodd-で活用する)
-12. [よくある質問とトラブルシューティング](#12-よくある質問とトラブルシューティング)
+12. [DD を ASP から使う(2 段階のコンパイル)](#12-dd-を-asp-から使う2-段階のコンパイル)
+13. [よくある質問とトラブルシューティング](#13-よくある質問とトラブルシューティング)
 
 ---
 
@@ -641,6 +642,9 @@ BDD 変数の上限 65536 は「保存 DD の原子数 + 新しいプログラ�
 保存ファイルは信頼できる入力として扱われます(原子名がそのままプログラム文として
 グラウンダに渡されます)。
 
+まとまった例題は 12 章にあります(DDASP で作った DD に 2 段階目の ASP を重ねる例と、
+KyotoDD で直接作った DD を ASP から使う例)。
+
 ### グラウンディング済みファイルを使う
 
 gringo の出力(aspif 形式)を保存しておけば、同じ入力を何度もグラウンディングせずに済みます。
@@ -699,6 +703,9 @@ new = ddasp.compile_files(["examples/coloring_fix.lp"], dds=[d])   # dds=[old] �
 new.count                                       # 12
 ```
 
+KyotoDD で直接作った `kyotodd.ZDD` も、`ddasp.StoredDD.from_zdd(zdd, names)` で原子名を付ければ
+保存 DD になり、同じように `dds=` に渡せます(12.2 節)。
+
 `compile_text` / `compile_files` / `compile_control` は、保存 DD の宣言(`#external` など)を
 プログラム部 `ddasp_loaded` として一緒にグラウンディングします。`compile(program, dds=...)` に
 グラウンディング済みの `Program` を渡す場合は宣言を注入しないので、使う保存原子は
@@ -748,7 +755,143 @@ k 番目の解の取得(`unrank`)など、KyotoDD の ZDD 演算が一通り使�
 
 ---
 
-## 12. よくある質問とトラブルシューティング
+## 12. DD を ASP から使う(2 段階のコンパイル)
+
+9 章の `--save` / `--load` は「ASP プログラム → DD」の一方向だけでなく、
+**DD を ASP プログラムから使う** 方向にも使えます。保存 DD の原子は新しいプログラムの中で
+`#external` 原子として宣言されるので、ASP 側は保存された原子を本体や制約に書くだけです。
+ここでは 2 つの流れを例題で見ます。
+
+- 12.1: DDASP で作った DD に、別の ASP プログラムで制約と最適化を重ねる。
+- 12.2: KyotoDD で直接作った族(DD)を、ASP プログラムの制約として使う。
+
+### 12.1 DDASP で作った DD をさらに ASP から使う(`examples/independent_set_maximal.lp`)
+
+8.2 節の独立集合(4×4 格子で 1234 個)の DD を保存し、2 段階目のプログラムで
+**極大** 独立集合だけに絞ります。極大とは「選ばれていない頂点はどれも、選ばれた頂点に
+隣接している」ことです。
+
+```prolog
+#const grid = 4.
+vertex((X,Y)) :- X = 1..grid, Y = 1..grid.
+adj((X,Y),(X+1,Y)) :- vertex((X,Y)), X < grid.
+adj((X,Y),(X,Y+1)) :- vertex((X,Y)), Y < grid.
+blocked(V) :- adj(U,V), in(U).
+blocked(U) :- adj(U,V), in(V).
+:- vertex(V), not in(V), not blocked(V).
+#minimize { 1,V : in(V) }.      % --opt を付けると最小の極大独立集合だけになる
+#show in/1.
+```
+
+`in/1` は保存 DD の原子です。本体(`blocked` の定義、制約、`#minimize`)には自由に使えますが、
+頭部に書く(定義する)とエラーになります。1 段階目で `#show` していない `vertex/1` と `adj/2`
+は保存されていないので、2 段階目で改めて定義しています(定数を `n` でなく `grid` と
+しているのは、2 つのファイルを 1 つのプログラムとして clingo に渡したときに定数が
+二重定義にならないようにするためです)。
+
+```sh
+./build/ddasp --gringo "$G" --save is.ddasp examples/independent_set.lp           # answer sets: 1234
+./build/ddasp --gringo "$G" --load is.ddasp examples/independent_set_maximal.lp   # answer sets: 42
+./build/ddasp --gringo "$G" --load is.ddasp --opt --enumerate examples/independent_set_maximal.lp
+```
+
+```
+answer sets: 2
+optimum: 4
+in((1,3)) in((2,1)) in((3,4)) in((4,2))
+in((1,2)) in((2,4)) in((3,1)) in((4,3))
+```
+
+1234 個の独立集合のうち極大なものは 42 個、そのうち最小のもの(独立支配集合)は 4 頂点で
+2 つあります。clingo に 2 つのファイルを一緒に渡した結果と一致します。2 段階目は 1 段階目の
+計算をやり直さず、保存した族を制約として掛け合わせるだけなので、1 段階目の DD が大きくても
+2 段階目は軽く済みます。
+
+Python では `Result` をそのまま `dds=` に渡せます。
+
+```python
+import ddasp
+
+first = ddasp.compile_files(["examples/independent_set.lp"])                 # first.count == 1234
+maximal = ddasp.compile_files(["examples/independent_set_maximal.lp"], dds=[first])
+maximal.count                                                                 # 42
+smallest = ddasp.compile_files(["examples/independent_set_maximal.lp"], dds=[first], optimize=True)
+smallest.count, smallest.optimum                                              # (2, [4])
+```
+
+注意: `size(S) :- S = #count { V : in(V) }.` のように、取りうる値が多い集約を多数の保存原子に
+対して書くと、値ごとに重み付きルールができるため現在の実装では非常に時間がかかります
+(16 頂点で数十秒)。個数が欲しいだけなら、`#minimize` や 11 章の ZDD 演算
+(`z.size_le(k)` など)を使ってください。
+
+### 12.2 KyotoDD で作った DD を ASP から使う(`examples/shift_dd.py`, `examples/shift.lp`)
+
+今度は DD を ASP からではなく KyotoDD の族演算で直接作り、それを ASP の制約として使います。
+題材は 1 週間の勤務パターンです。「働く日の集合」を、`mon`〜`sun` を変数とする ZDD で表し、
+「週 4 日以下」と「3 連勤なし」を族の演算で組み立てます(`examples/shift_dd.py`)。
+
+```python
+import ddasp, kyotodd
+
+days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+kyotodd.init()
+var = dict(zip(days, kyotodd.new_vars(len(days))))        # 1 日 = 1 変数
+
+family = kyotodd.ZDD.power_set(len(days)).size_le(4)      # 週 4 日以下
+for i in range(len(days) - 2):                            # 3 連勤なし
+    three = kyotodd.ZDD.single_set([var[days[i]], var[days[i + 1]], var[days[i + 2]]])
+    family = family - family.restrict(three)              # restrict(g): g の集合を含む集合だけ
+
+dd = ddasp.StoredDD.from_zdd(family, {var[d]: f"work({d})" for d in days})
+dd.count                                                  # 78
+dd.save("shift.ddasp")
+```
+
+`StoredDD.from_zdd(zdd, names)` が ZDD を保存 DD にします。`names` は「変数番号 → 原子名」の
+辞書(または変数 1, 2, ... の名前を順に並べたリスト)です。名前を付けた変数が kyotodd の
+レベル 1..N を占めていること(新しいインスタンスで `kyotodd.new_vars(N)` した直後の状態が
+そうです)と、ZDD に現れる変数すべてに名前があることが条件で、名前は ASP の原子として書ける形
+(小文字または `_` で始まる)で重複がないこと。`fact_names=[...]` で常に表示される事実も
+付けられます。
+
+ASP 側(`examples/shift.lp`)は、保存された `work/1` を使って制約を足し、勤務日数を導出します。
+
+```prolog
+:- not work(sat), not work(sun).            % 土日のどちらかは出勤
+days(N) :- N = #count { D : work(D) }.      % 勤務日数を導出
+#show days/1.
+```
+
+```sh
+.venv/bin/python examples/shift_dd.py shift.ddasp
+./build/ddasp --gringo "$G" --load shift.ddasp --enumerate examples/shift.lp
+```
+
+```
+78 work patterns, 7 atoms: work(sun) work(sat) work(fri) work(thu) work(wed) work(tue) work(mon)
+answer sets: 54
+days(4) work(sat) work(thu) work(tue) work(mon)
+days(4) work(sat) work(thu) work(wed) work(mon)
+...
+```
+
+78 個の勤務パターンのうち土日のどちらかを含むものが 54 個で、各解に勤務日数 `days/1` が
+付いています。Python だけで済ませるなら、ファイルに保存せず `dd` をそのまま渡します。
+
+```python
+res = ddasp.compile_files(["examples/shift.lp"], dds=[dd])
+res.count                                                 # 54
+```
+
+ZDD の出どころは何でも構いません。KyotoDD の演算で作った族のほかに、フロンティア法などで
+列挙したグラフの部分構造(パス、全域木、...)や Graphillion 形式のファイル
+(`kyotodd.ZDD.import_graphillion_str`)から読み込んだ族も、同じ手順で ASP の制約として使えます。
+「DD で表しやすい大域的な制約」と「ASP で書きやすいルール」を組み合わせるのが、この使い方の狙いです。
+
+---
+
+## 13. よくある質問とトラブルシューティング
 
 **Q. `answer sets: 0` と表示される。**
 プログラムに解がありません(clingo でいう UNSATISFIABLE)。制約が厳しすぎないか確認してください。
@@ -772,8 +915,9 @@ ZDD は小さくなります。なお、グラウンディング後の原子数�
 
 **Q. 一度作った DD を別のプログラムから使いたい。**
 `--save FILE` で保存し、別のプログラムのコンパイル時に `--load FILE` を付けます
-(9 章「DD を保存して、別の ASP プログラムから再利用する」)。保存した原子は新しい
-プログラムの `#external` 原子になるので、本体や制約にそのまま書けます(頭部に書くとエラー)。
+(9 章「DD を保存して、別の ASP プログラムから再利用する」、例題は 12 章)。保存した原子は
+新しいプログラムの `#external` 原子になるので、本体や制約にそのまま書けます(頭部に書くとエラー)。
+KyotoDD で直接作った ZDD も `StoredDD.from_zdd` で同じように使えます(12.2 節)。
 
 **Q. `#count` / `#sum` / 選言ルール(`a | b :- ...`)は使えますか?**
 はい。通常ルール、選択ルール、制約、選言ルール、`#count` / `#sum` を含む本体、
