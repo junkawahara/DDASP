@@ -41,6 +41,24 @@ kyotodd::ZDD bdd_to_zdd_over(const kyotodd::BDD& f, const std::vector<kyotodd::b
 kyotodd::BDD zdd_to_bdd_over(const kyotodd::ZDD& f, const std::vector<kyotodd::bddvar>& vars);
 
 /**
+ * @brief Rename the variables of a ZDD: from[i] becomes to[i].
+ *
+ * The result is the family obtained by replacing, in every set of @p f, the
+ * variable from[i] by to[i]. The renaming must be injective (no variable listed
+ * twice in @p from or in @p to); a variable of @p f that is missing from
+ * @p from causes std::invalid_argument, while variables of @p from that do not
+ * occur in @p f are ignored.
+ *
+ * When the renaming keeps the level order of the variables (level(from[i]) <
+ * level(from[j]) iff level(to[i]) < level(to[j])) the diagram is rebuilt node
+ * by node in linear time. Otherwise it is rebuilt with set operations, which
+ * costs as much as reordering the diagram (and needs variable numbers up to
+ * 65536, the limit of ZDD::change).
+ */
+kyotodd::ZDD rename_zdd(const kyotodd::ZDD& f, const std::vector<kyotodd::bddvar>& from,
+                        const std::vector<kyotodd::bddvar>& to);
+
+/**
  * @brief Variable-set BDD of the given variables, in the encoding that
  * BDD::support() returns and BDD::exist(const BDD&) expects (a chain whose
  * 1-edges all lead to the true terminal).

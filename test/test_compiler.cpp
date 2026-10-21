@@ -511,6 +511,84 @@ TEST(DdUtil, DeepConversionsDoNotRecurse) {
     std::reverse(weights.begin(), weights.end());
     BDD at_most_one_missing = threshold_bdd(terms, weights, static_cast<long long>(n) - 1);
     EXPECT_EQ(std::to_string(n + 1), bdd_to_zdd_over(at_most_one_missing, vars).exact_count().to_string());
+
+    // Renaming walks the chain iteratively as well: shift the single set up by
+    // `shift` levels (order preserving), then reverse a shorter chain (set operations).
+    const size_t shift = 1000;
+    std::vector<bddvar> from(vars.begin(), vars.end() - shift), to(vars.begin() + shift, vars.end());
+    ZDD chain = ZDD::from_sets(std::vector<std::vector<bddvar> >(1, from));
+    EXPECT_EQ(ZDD::from_sets(std::vector<std::vector<bddvar> >(1, to)), rename_zdd(chain, from, to));
+    const size_t m = 2000;
+    std::vector<bddvar> head(vars.begin(), vars.begin() + m), reversed(head.rbegin(), head.rend());
+    ZDD short_chain = ZDD::from_sets(std::vector<std::vector<bddvar> >(1, head));
+    EXPECT_EQ(short_chain, rename_zdd(short_chain, head, reversed));  // a permutation of the same set
+}
+
+namespace {
+
+typedef std::set<std::set<bddvar> > VarFamily;
+
+VarFamily var_family(const ZDD& z) {
+    VarFamily fam;
+    std::vector<std::vector<bddvar> > sets = z.enumerate();
+    for (size_t i = 0; i < sets.size(); ++i) fam.insert(std::set<bddvar>(sets[i].begin(), sets[i].end()));
+    return fam;
+}
+
+std::vector<bddvar> V(bddvar a, bddvar b, bddvar c) {
+    std::vector<bddvar> v;
+    v.push_back(a);
+    v.push_back(b);
+    v.push_back(c);
+    return v;
+}
+
+/** {{a}, {b, c}, {a, c}} */
+ZDD three_sets(bddvar a, bddvar b, bddvar c) {
+    std::vector<std::vector<bddvar> > sets;
+    sets.push_back(std::vector<bddvar>(1, a));
+    sets.push_back(V(b, c, c));
+    sets.push_back(V(a, c, c));
+    return ZDD::from_sets(sets);
+}
+
+}  // namespace
+
+TEST(DdUtil, RenameZddKeepingTheOrder) {
+    bddvar a = kyotodd::bddnewvar(), b = kyotodd::bddnewvar(), c = kyotodd::bddnewvar();
+    ZDD z = three_sets(a, b, c);
+    bddvar x = kyotodd::bddnewvar(), y = kyotodd::bddnewvar(), w = kyotodd::bddnewvar();  // above a, b, c
+    ZDD r = rename_zdd(z, V(a, b, c), V(x, y, w));
+    EXPECT_EQ(var_family(three_sets(x, y, w)), var_family(r));
+    EXPECT_EQ(z, rename_zdd(z, V(a, b, c), V(a, b, c)));  // identity
+    // Variables of `from` that do not occur in the ZDD are ignored.
+    EXPECT_EQ(r, rename_zdd(z, V(b, c, a), V(y, w, x)));
+    // Back again (the targets lie below the sources this time).
+    EXPECT_EQ(z, rename_zdd(r, V(x, y, w), V(a, b, c)));
+}
+
+TEST(DdUtil, RenameZddChangingTheOrder) {
+    bddvar a = kyotodd::bddnewvar(), b = kyotodd::bddnewvar(), c = kyotodd::bddnewvar();
+    ZDD z = three_sets(a, b, c);
+    bddvar x = kyotodd::bddnewvar(), y = kyotodd::bddnewvar(), w = kyotodd::bddnewvar();
+    // a -> w, b -> y, c -> x reverses the order: {{w}, {y, x}, {w, x}}
+    ZDD r = rename_zdd(z, V(a, b, c), V(w, y, x));
+    EXPECT_EQ(var_family(three_sets(w, y, x)), var_family(r));
+    // Renaming onto the same variables in a different order: {{c}, {b, a}, {c, a}}
+    ZDD s = rename_zdd(z, V(a, b, c), V(c, b, a));
+    EXPECT_EQ(var_family(three_sets(c, b, a)), var_family(s));
+    EXPECT_EQ(z, rename_zdd(s, V(c, b, a), V(a, b, c)));
+}
+
+TEST(DdUtil, RenameZddTerminalsAndErrors) {
+    bddvar a = kyotodd::bddnewvar(), b = kyotodd::bddnewvar(), c = kyotodd::bddnewvar();
+    EXPECT_EQ(ZDD::Empty, rename_zdd(ZDD::Empty, V(a, b, c), V(c, b, a)));
+    EXPECT_EQ(ZDD::Single, rename_zdd(ZDD::Single, V(a, b, c), V(c, b, a)));
+    ZDD z = three_sets(a, b, c);
+    EXPECT_THROW(rename_zdd(z, V(a, b, c), std::vector<bddvar>(2, a)), std::invalid_argument);  // sizes differ
+    EXPECT_THROW(rename_zdd(z, V(a, b, c), V(a, a, c)), std::invalid_argument);                 // target twice
+    EXPECT_THROW(rename_zdd(z, V(a, a, c), V(a, b, c)), std::invalid_argument);                 // source twice
+    EXPECT_THROW(rename_zdd(z, std::vector<bddvar>(1, a), std::vector<bddvar>(1, b)), std::invalid_argument);
 }
 
 TEST(DdUtil, VariableSetQuantifiesLikeTheVectorForm) {

@@ -4,6 +4,7 @@
 #include <map>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace ddasp {
@@ -177,6 +178,91 @@ BDD zdd_to_bdd_over(const ZDD& f, const std::vector<bddvar>& vars) {
             ret = BDD::ite(BDD::prime(v), ret, fr.lo);
         }
         memo[fr.f.id()][fr.i] = ret;
+        stack.pop_back();
+    }
+    return ret;
+}
+
+namespace {
+
+struct RenameFrame {
+    ZDD f;
+    int stage;
+    ZDD lo;
+    explicit RenameFrame(const ZDD& f_) : f(f_), stage(0) {}
+};
+
+struct IndexByLevel {
+    const std::vector<bddvar>* vars;
+    bool operator()(size_t a, size_t b) const {
+        return kyotodd::bddlevofvar((*vars)[a]) < kyotodd::bddlevofvar((*vars)[b]);
+    }
+};
+
+}  // namespace
+
+ZDD rename_zdd(const ZDD& f, const std::vector<bddvar>& from, const std::vector<bddvar>& to) {
+    if (from.size() != to.size()) throw std::invalid_argument("rename_zdd: from and to differ in size");
+    std::unordered_map<bddvar, bddvar> target;
+    std::unordered_set<bddvar> targets;
+    for (size_t i = 0; i < from.size(); ++i) {
+        if (!target.insert(std::make_pair(from[i], to[i])).second) {
+            throw std::invalid_argument("rename_zdd: variable " + std::to_string(from[i]) + " is listed twice in from");
+        }
+        if (!targets.insert(to[i]).second) {
+            throw std::invalid_argument("rename_zdd: variable " + std::to_string(to[i]) + " is listed twice in to");
+        }
+    }
+    // An order-preserving renaming can create every node directly (getnode needs
+    // the children strictly below the variable); any other one goes through set
+    // operations, which reorder the diagram.
+    std::vector<size_t> idx(from.size());
+    for (size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+    IndexByLevel by_from_level = {&from};
+    std::sort(idx.begin(), idx.end(), by_from_level);
+    bool monotone = true;
+    for (size_t k = 1; k < idx.size() && monotone; ++k) {
+        monotone = kyotodd::bddlevofvar(to[idx[k - 1]]) < kyotodd::bddlevofvar(to[idx[k]]);
+    }
+
+    std::unordered_map<bddp, ZDD> memo;
+    std::vector<RenameFrame> stack;
+    stack.push_back(RenameFrame(f));
+    ZDD ret;
+    while (!stack.empty()) {
+        RenameFrame& fr = stack.back();
+        if (fr.stage == 0) {
+            if (fr.f.is_terminal()) {
+                ret = fr.f;
+                stack.pop_back();
+                continue;
+            }
+            std::unordered_map<bddp, ZDD>::iterator it = memo.find(fr.f.id());
+            if (it != memo.end()) {
+                ret = it->second;
+                stack.pop_back();
+                continue;
+            }
+            if (!target.count(fr.f.top())) {
+                throw std::invalid_argument("rename_zdd: ZDD depends on variable " + std::to_string(fr.f.top()) +
+                                            " which is not renamed");
+            }
+            fr.stage = 1;
+            ZDD child = fr.f.child0();
+            stack.push_back(RenameFrame(child));  // invalidates fr
+            continue;
+        }
+        if (fr.stage == 1) {
+            fr.lo = ret;
+            fr.stage = 2;
+            ZDD child = fr.f.child1();
+            stack.push_back(RenameFrame(child));  // invalidates fr
+            continue;
+        }
+        // ret holds the renamed 1-child: the sets containing the top variable, without it.
+        bddvar w = target[fr.f.top()];
+        ret = monotone ? ZDD::getnode(w, fr.lo, ret) : fr.lo + ret.change(w);
+        memo[fr.f.id()] = ret;
         stack.pop_back();
     }
     return ret;
