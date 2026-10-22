@@ -36,6 +36,24 @@ enum class Method {
 /** @brief Parse a method name ("twocopy" or "scc"); throws std::invalid_argument otherwise. */
 Method parse_method(const std::string& name);
 
+/**
+ * @brief Which models of the ground program the result represents.
+ *
+ * All three read the rules of the ground program as gringo emits it, so the
+ * auxiliary atoms gringo introduces (aggregates, `not not`) are ordinary atoms
+ * of the Supported and Classical families.
+ */
+enum class Semantics {
+    Stable,     ///< answer sets (the default)
+    Supported,  ///< models of Clark's completion: every true atom has a rule with it in the head
+                ///< whose body is true and whose other head atoms are false (`a :- a.` supports a;
+                ///< free atoms, i.e. #external and loaded ones, are always supported)
+    Classical   ///< models of the rules read as implications body -> head (choice rules impose nothing)
+};
+
+/** @brief Parse a semantics name ("stable", "supported" or "classical"); throws std::invalid_argument otherwise. */
+Semantics parse_semantics(const std::string& name);
+
 /** @brief How the DD variable order of the atoms is chosen. */
 enum class OrderHeuristic {
     AtomId,       ///< ascending gringo atom id
@@ -64,7 +82,14 @@ struct CostBound {
 
 /** @brief Compilation options. */
 struct CompileOptions {
+    /** Stable-model method; used for Semantics::Stable only. */
     Method method;
+    /**
+     * The family to compute (see Semantics). The tautological rules are removed
+     * (Program::without_tautologies) for the stable semantics only: supported
+     * models may depend on them (`a :- a.`), and classical models do not change.
+     */
+    Semantics semantics;
     /** Heuristic for the variable order of atoms not listed in @c order. */
     OrderHeuristic order_heuristic;
     /**
@@ -127,7 +152,7 @@ struct CompileOptions {
     std::vector<Atom> order;
 
     CompileOptions()
-        : method(Method::Scc), order_heuristic(OrderHeuristic::NaturalName), project_to_shown(true),
+        : method(Method::Scc), semantics(Semantics::Stable), order_heuristic(OrderHeuristic::NaturalName), project_to_shown(true),
           use_project_statements(false), optimize(false), external_values(false), cost_histogram(false),
           best(0) {}
 };
@@ -295,11 +320,12 @@ struct CompileResult {
 const size_t kMaxBddVariables = 65536;
 
 /**
- * @brief Compile a program into a ZDD (and BDD) of its answer sets.
+ * @brief Compile a program into a ZDD (and BDD) of its answer sets (or of its
+ *        supported or classical models, see CompileOptions::semantics).
  *
- * The program is compiled without its tautological rules
- * (Program::without_tautologies; the answer sets are the same), which decides
- * which #external atoms a rule defines, as in clingo.
+ * For the stable semantics the program is compiled without its tautological
+ * rules (Program::without_tautologies; the answer sets are the same), which
+ * decides which #external atoms a rule defines, as in clingo.
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
  *         when optimizing or bounding costs with a #minimize weight outside the
  *         32-bit range, a cost bound with more entries than #minimize priority

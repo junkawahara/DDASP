@@ -102,6 +102,13 @@ Method parse_method(const std::string& name) {
     throw std::invalid_argument("unknown method '" + name + "' (expected twocopy or scc)");
 }
 
+Semantics parse_semantics(const std::string& name) {
+    if (name == "stable") return Semantics::Stable;
+    if (name == "supported") return Semantics::Supported;
+    if (name == "classical") return Semantics::Classical;
+    throw std::invalid_argument("unknown semantics '" + name + "' (expected stable, supported or classical)");
+}
+
 std::vector<Atom> program_atoms(const Program& prog) {
     std::set<Atom> atoms;
     for (size_t r = 0; r < prog.rules().size(); ++r) {
@@ -529,7 +536,9 @@ public:
         : prog_(prog), order_(order), shown_(shown), options_(options), loaded_(loaded) {
         Atom max_atom = 0;
         for (size_t i = 0; i < order_.size(); ++i) max_atom = std::max(max_atom, order_[i]);
-        if (options_.method == Method::TwoCopy) {
+        if (options_.semantics != Semantics::Stable) {
+            // no unfounded-set conditions: groups_ stays empty, no u variables
+        } else if (options_.method == Method::TwoCopy) {
             groups_.push_back(order_);
         } else {
             groups_ = nontrivial_sccs(prog_, max_atom);
@@ -551,7 +560,8 @@ public:
         std::vector<Part> parts;
         build_models(parts);
         st.models_time = t.lap();
-        if (options_.method == Method::Scc) {
+        if (options_.semantics == Semantics::Supported ||
+            (options_.semantics == Semantics::Stable && options_.method == Method::Scc)) {
             build_supported(parts);
             st.supported_time = t.lap();
         }
@@ -1242,16 +1252,23 @@ std::invalid_argument load_error(const std::string& what) { return std::invalid_
 
 }  // namespace
 
+/** The program as compiled: without its tautologies for the stable semantics (see CompileOptions::semantics). */
+Program program_to_compile(const Program& program, const CompileOptions& options, size_t& simplified) {
+    simplified = 0;
+    if (options.semantics != Semantics::Stable) return program;
+    return program.without_tautologies(&simplified);
+}
+
 CompileResult compile(const Program& program, const CompileOptions& options) {
     size_t simplified = 0;
-    Program simple = program.without_tautologies(&simplified);
+    Program simple = program_to_compile(program, options, simplified);
     return compile_with(simple, options, 0, simplified);
 }
 
 CompileResult compile(const Program& input, const CompileOptions& options, const std::vector<LoadedDD>& loaded) {
     if (loaded.empty()) return compile(input, options);
     size_t simplified = 0;
-    Program program = input.without_tautologies(&simplified);
+    Program program = program_to_compile(input, options, simplified);
 
     std::map<std::string, std::set<Atom> > by_name = atoms_by_name(program);
     std::set<std::string> program_facts;

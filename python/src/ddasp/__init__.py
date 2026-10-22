@@ -566,10 +566,20 @@ def compile(
     cost_slack: Union[int, Sequence[int], None] = None,
     cost_histogram: bool = False,
     best: Optional[int] = None,
+    semantics: str = "stable",
 ) -> Result:
     """Compile a :class:`Program`.
 
-    :param method: ``"scc"`` (default) or ``"twocopy"``.
+    :param method: ``"scc"`` (default) or ``"twocopy"`` (stable semantics only).
+    :param semantics: ``"stable"`` (default): the answer sets; ``"supported"``: the models
+                      of Clark's completion (every true atom has a rule with it in the head
+                      whose body is true and whose other head atoms are false; ``a :- a.``
+                      supports ``a``, free ``#external`` and loaded atoms are always supported);
+                      ``"classical"``: the models of the rules read as implications (choice
+                      rules impose nothing). Both read the ground program as gringo emits
+                      it, auxiliary atoms (aggregates, ``not not``) included. Everything else
+                      (projection, ``#minimize``, consequences, stored DDs) applies to the
+                      chosen family.
     :param order: ``"name"`` (default), ``"id"``, or a list of atom ids to place on top
                   (the remaining atoms follow in name order).
     :param project: ``True`` (default): project the answer sets onto the shown atoms;
@@ -646,7 +656,7 @@ def compile(
         raise ValueError(f"best: expected a positive integer or None, got {best!r}")
     core = _core_compile(program, method, heuristic, order_atoms, project, use_project, optimize, external_values,
                          loaded, node_max or 0, cost_le=le, cost_ge=ge, cost_eq=eq, cost_slack=slack,
-                         cost_histogram=cost_histogram, best=best or 0)
+                         cost_histogram=cost_histogram, best=best or 0, semantics=semantics)
     histogram = {tuple(cost): int(count) for cost, count in core.cost_histogram} if cost_histogram else None
     best_sets = [(tuple(cost), frozenset(names)) for cost, names in core.best] if best else None
     return Result(core, histogram, best_sets)

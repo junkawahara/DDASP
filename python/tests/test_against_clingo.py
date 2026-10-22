@@ -566,3 +566,19 @@ def test_json_output(ddasp_bin, tmp_path):
     path.write_text("a. :- a. #show a/0.")
     out, _ = run_ddasp(ddasp_bin, [path], "--json", "--enumerate", "--cautious")
     assert json.loads(out) == {"count": 0, "cautious": [], "answer_sets": []}
+
+
+def test_semantics_option(ddasp_bin):
+    loop = EXAMPLES / "loop.lp"  # { c }. a :- b. b :- a. a :- c.
+    out, _ = run_ddasp(ddasp_bin, [loop])
+    assert out.splitlines()[0] == "answer sets: 2"
+    out, _ = run_ddasp(ddasp_bin, [loop], "--semantics", "supported", "--enumerate")
+    assert out.splitlines()[0] == "supported models: 3"
+    assert sorted(sorted(l.split()) for l in out.splitlines()[1:]) == [[], ["a", "b"], ["a", "b", "c"]]
+    out, _ = run_ddasp(ddasp_bin, [loop], "--semantics", "classical", "-q", "--count")
+    assert out.strip() == "3"
+    out, _ = run_ddasp(ddasp_bin, [loop], "--semantics", "classical", "--json", "--stats")
+    assert json.loads(out)["stats"]["aux_vars"] == 0
+    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--semantics", "minimal", str(loop)],
+                          capture_output=True, text=True)
+    assert proc.returncode != 0 and "semantics" in proc.stderr

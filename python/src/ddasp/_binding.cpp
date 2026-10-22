@@ -229,9 +229,10 @@ Result compile_py(const Program& program, const std::string& method, const std::
                   bool external_values, const std::vector<py::bytes>& loaded, uint64_t node_max,
                   const std::vector<long long>& cost_le, const std::vector<long long>& cost_ge,
                   const std::vector<long long>& cost_eq, const std::vector<long long>& cost_slack,
-                  bool cost_histogram, uint64_t best) {
+                  bool cost_histogram, uint64_t best, const std::string& semantics) {
     CompileOptions opts;
     opts.method = parse_method(method);
+    opts.semantics = parse_semantics(semantics);
     opts.order_heuristic = parse_order_heuristic(order_heuristic);
     opts.order = order;
     opts.project_to_shown = project;
@@ -399,8 +400,9 @@ PYBIND11_MODULE(_core, m) {
           py::arg("node_max") = static_cast<uint64_t>(0), py::arg("cost_le") = std::vector<long long>(),
           py::arg("cost_ge") = std::vector<long long>(), py::arg("cost_eq") = std::vector<long long>(),
           py::arg("cost_slack") = std::vector<long long>(), py::arg("cost_histogram") = false,
-          py::arg("best") = static_cast<uint64_t>(0),
-          "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images, "
+          py::arg("best") = static_cast<uint64_t>(0), py::arg("semantics") = "stable",
+          "Compile a Program into decision diagrams of its answer sets (`semantics`: stable, supported or "
+          "classical models); `loaded` holds stored DD file images, "
           "`node_max` limits KyotoDD's node table (0 = unlimited; NodeLimitError when reached); `cost_le`, "
           "`cost_ge` and `cost_eq` bound the #minimize cost vector lexicographically (one entry per priority "
           "level, most important first) and `cost_slack` is an upper bound relative to the optimum, which is "

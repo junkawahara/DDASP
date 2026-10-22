@@ -971,3 +971,47 @@ TEST(Compiler, TautologiesKeepTheSupportOfTheOtherChoiceAtoms) {
     EXPECT_EQ(2u, res.stats.simplified_rules);
     EXPECT_EQ(F(S(), S(1), S(1, 2)), family_of(res));
 }
+
+TEST(Compiler, SupportedAndClassicalSemantics) {
+    CompileOptions supported = no_projection(), classical = no_projection();
+    supported.semantics = Semantics::Supported;
+    classical.semantics = Semantics::Classical;
+    // {c(3)}. a(1) :- b(2). b :- a. a :- c.   (examples/loop.lp)
+    std::string loop = "asp 1 0 0\n1 1 1 3 0 0\n1 0 1 1 0 1 2\n1 0 1 2 0 1 1\n1 0 1 1 0 1 3\n0\n";
+    EXPECT_EQ(F(S(), S(1, 2, 3)), compile_family(loop));
+    EXPECT_EQ(F(S(), S(1, 2), S(1, 2, 3)), compile_family(loop, supported)) << "{a, b} supports itself";
+    EXPECT_EQ(F(S(), S(1, 2), S(1, 2, 3)), compile_family(loop, classical));
+    // a(1) :- b(2).   b has no rule: false under support, free classically.
+    std::string impl = "asp 1 0 0\n1 0 1 1 0 1 2\n0\n";
+    EXPECT_EQ(F(S()), compile_family(impl));
+    EXPECT_EQ(F(S()), compile_family(impl, supported));
+    EXPECT_EQ(F(S(), S(1), S(1, 2)), compile_family(impl, classical));
+    // a(1) :- a.   A tautology: dropped for the stable semantics, a self-support otherwise.
+    std::string self = "asp 1 0 0\n1 0 1 1 0 1 1\n0\n";
+    EXPECT_EQ(F(S()), compile_family(self));
+    EXPECT_EQ(F(S(), S(1)), compile_family(self, supported));
+    EXPECT_EQ(F(S(), S(1)), compile_family(self, classical));
+    // a(1) | b(2).   {a, b} is a classical model but not supported (each atom needs the other false).
+    std::string disj = "asp 1 0 0\n1 0 2 1 2 0 0\n0\n";
+    EXPECT_EQ(F(S(1), S(2)), compile_family(disj));
+    EXPECT_EQ(F(S(1), S(2)), compile_family(disj, supported));
+    EXPECT_EQ(F(S(1), S(2), S(1, 2)), compile_family(disj, classical));
+    // #external e(1). a(2) :- e.   A free atom is always supported.
+    std::string ext = "asp 1 0 0\n5 1 2\n1 0 1 2 0 1 1\n0\n";
+    EXPECT_EQ(F(S(), S(1, 2)), compile_family(ext));
+    EXPECT_EQ(F(S(), S(1, 2)), compile_family(ext, supported));
+    EXPECT_EQ(F(S(), S(2), S(1, 2)), compile_family(ext, classical));
+    // {a(1)}. c(3) :- 1 { a; b(2) }.   A weight body; b has no rule (false under support, free classically).
+    std::string weight = "asp 1 0 0\n1 1 1 1 0 0\n1 0 1 3 1 1 2 1 1 2 1\n0\n";
+    EXPECT_EQ(F(S(), S(1, 3)), compile_family(weight));
+    EXPECT_EQ(F(S(), S(1, 3)), compile_family(weight, supported));
+    Family classical_weight = F(S(), S(3), S(1, 3), S(2, 3));
+    classical_weight.insert(S(1, 2, 3));
+    EXPECT_EQ(classical_weight, compile_family(weight, classical));
+    // Statistics: no auxiliary variables or groups without the stable semantics.
+    Program p = read_aspif_string(loop);
+    CompileResult res = compile(p, supported);
+    EXPECT_EQ(0u, res.stats.aux_vars);
+    EXPECT_EQ(0u, res.stats.groups);
+    EXPECT_EQ(0u, res.stats.simplified_rules);
+}

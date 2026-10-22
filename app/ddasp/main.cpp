@@ -60,6 +60,7 @@ struct Options {
     bool external_values = false;
     std::vector<CostBound> cost_le, cost_ge, cost_eq;  // --cost-le / --cost-ge / --cost-eq (empty = none)
     std::string method = "scc";
+    std::string semantics = "stable";
     std::string order = "name";
     size_t enumerate_limit = 0;  // 0 = unlimited
     uint64_t node_max = 0;       // --node-max, 0 = unlimited
@@ -122,6 +123,11 @@ void usage(std::ostream& os) {
           "                     sets it stands for); costs of no answer set are omitted\n"          "  --external-values  fix every free #external atom to its declared initial\n"
           "                     value (`#external a. [true]`; gringo declares a plain\n"
           "                     `#external a.` as false); ignored by default\n"
+          "  --semantics S      which models to compute: stable (default, the answer sets),\n"
+          "                     supported (models of Clark's completion: every true atom has a\n"
+          "                     rule with a true body and the other head atoms false) or\n"
+          "                     classical (models of the rules read as implications); the\n"
+          "                     summary line is then `supported models:` / `classical models:`\n"
           "  --method M         stable-model method: scc (default) or twocopy\n"
           "  --order H          variable order heuristic: name (default), id, or a\n"
           "                     file with one atom name (or __atomN) per line (top of\n"
@@ -228,6 +234,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
             if (!parse_cost_bounds(a, v, bounds)) return false;
         } else if (a == "--external-values") {
             opt.external_values = true;
+        } else if (a == "--semantics") {
+            opt.semantics = need_value("--semantics");
         } else if (a == "--method") {
             opt.method = need_value("--method");
         } else if (a == "--order") {
@@ -585,6 +593,7 @@ int main(int argc, char** argv) {
         copts.cost_histogram = opt.cost_histogram;
         copts.external_values = opt.external_values;
         copts.method = parse_method(opt.method);
+        copts.semantics = parse_semantics(opt.semantics);
         if (opt.order == "name" || opt.order == "id") {
             copts.order_heuristic = parse_order_heuristic(opt.order);
         } else {
@@ -641,7 +650,9 @@ int main(int argc, char** argv) {
                 json_numbers(std::cout, res.optimum);
             }
         } else {
-            if (!opt.quiet) std::cout << "answer sets: " << count.to_string() << "\n";
+            const char* kind = copts.semantics == Semantics::Stable ? "answer sets"
+                               : copts.semantics == Semantics::Supported ? "supported models" : "classical models";
+            if (!opt.quiet) std::cout << kind << ": " << count.to_string() << "\n";
             else if (opt.count) std::cout << count.to_string() << "\n";
             if (!opt.quiet && !res.optimum.empty()) {  // --opt or a relative cost bound
                 std::cout << "optimum:";
