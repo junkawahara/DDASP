@@ -64,6 +64,14 @@ struct CompileOptions {
     /** Keep only the optimal answer sets with respect to the #minimize statements. */
     bool optimize;
     /**
+     * Fix every free #external atom whose declaration carries an initial value
+     * (`#external a. [true]` / `[false]`; gringo declares `#external a.` as
+     * false) to that value; atoms declared free or released stay free, and a
+     * later declaration of the same atom overrides an earlier one. When false
+     * (the default) every initial value is ignored.
+     */
+    bool external_values;
+    /**
      * Atom order for the DD variables, listed from the top of the diagram down.
      * Atoms of the program missing from the list are appended below the listed
      * ones in the order given by @c order_heuristic.
@@ -72,7 +80,7 @@ struct CompileOptions {
 
     CompileOptions()
         : method(Method::Scc), order_heuristic(OrderHeuristic::NaturalName), project_to_shown(true),
-          optimize(false) {}
+          optimize(false), external_values(false) {}
 };
 
 /**

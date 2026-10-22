@@ -559,6 +559,7 @@ public:
             st.loaded_dds = loaded_->size();
         }
         build_assumptions(parts);
+        if (options_.external_values) build_external_values(parts);
         BDD stable = conjoin_sorted(parts);
         parts.clear();
         st.conjoin_time = t.lap();
@@ -836,6 +837,29 @@ private:
                 p.bdd = lit_x(lits[i]);
                 p.uses.push_back(a);
             }
+            p.first = true;
+            parts.push_back(p);
+        }
+    }
+
+    /**
+     * Initial values of the #external atoms: a free external declared true
+     * (false) is fixed to that value, the last declaration of an atom winning.
+     * Atoms defined by a rule are not external (their declaration is ignored,
+     * as in clingo), and loaded atoms carry no declaration value.
+     */
+    void build_external_values(std::vector<Part>& parts) const {
+        std::map<Atom, ExternalValue> value;
+        for (size_t e = 0; e < prog_.externals().size(); ++e) {
+            value[prog_.externals()[e].atom] = prog_.externals()[e].value;
+        }
+        for (std::map<Atom, ExternalValue>::const_iterator it = value.begin(); it != value.end(); ++it) {
+            Atom a = it->first;
+            if (!is_external_[a] || !rules_of_head_[a].empty()) continue;
+            if (it->second != ExternalValue::True && it->second != ExternalValue::False) continue;
+            Part p;
+            p.bdd = it->second == ExternalValue::True ? x_of(a) : ~x_of(a);
+            p.uses.push_back(a);
             p.first = true;
             parts.push_back(p);
         }

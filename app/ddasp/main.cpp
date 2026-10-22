@@ -45,6 +45,7 @@ struct Options {
     bool export_bdd = false;
     bool all_atoms = false;
     bool optimize = false;
+    bool external_values = false;
     std::string method = "scc";
     std::string order = "name";
     size_t enumerate_limit = 0;  // 0 = unlimited
@@ -79,6 +80,9 @@ void usage(std::ostream& os) {
           "  --all-atoms        do not project onto the shown atoms (every atom\n"
           "                     becomes a DD variable)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
+          "  --external-values  fix every free #external atom to its declared initial\n"
+          "                     value (`#external a. [true]`; gringo declares a plain\n"
+          "                     `#external a.` as false); ignored by default\n"
           "  --method M         stable-model method: scc (default) or twocopy\n"
           "  --order H          variable order heuristic: name (default), id, or a\n"
           "                     file with one atom name (or __atomN) per line (top of\n"
@@ -125,6 +129,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.all_atoms = true;
         } else if (a == "--opt") {
             opt.optimize = true;
+        } else if (a == "--external-values") {
+            opt.external_values = true;
         } else if (a == "--method") {
             opt.method = need_value("--method");
         } else if (a == "--order") {
@@ -345,6 +351,7 @@ int main(int argc, char** argv) {
         CompileOptions copts;
         copts.project_to_shown = !opt.all_atoms;
         copts.optimize = opt.optimize;
+        copts.external_values = opt.external_values;
         copts.method = parse_method(opt.method);
         if (opt.order == "name" || opt.order == "id") {
             copts.order_heuristic = parse_order_heuristic(opt.order);

@@ -65,10 +65,12 @@ std::set<Atom> S() { return std::set<Atom>(); }
 std::set<Atom> S(int a) { std::set<Atom> s; s.insert(a); return s; }
 std::set<Atom> S(int a, int b) { std::set<Atom> s = S(a); s.insert(b); return s; }
 std::set<Atom> S(int a, int b, int c) { std::set<Atom> s = S(a, b); s.insert(c); return s; }
+std::set<Atom> S(int a, int b, int c, int d) { std::set<Atom> s = S(a, b, c); s.insert(d); return s; }
 
 Family F(const std::set<Atom>& a) { Family f; f.insert(a); return f; }
 Family F(const std::set<Atom>& a, const std::set<Atom>& b) { Family f = F(a); f.insert(b); return f; }
 Family F(const std::set<Atom>& a, const std::set<Atom>& b, const std::set<Atom>& c) { Family f = F(a, b); f.insert(c); return f; }
+Family F(const std::set<Atom>& a, const std::set<Atom>& b, const std::set<Atom>& c, const std::set<Atom>& d) { Family f = F(a, b, c); f.insert(d); return f; }
 
 }  // namespace
 
@@ -204,6 +206,18 @@ TEST(Compiler, AssumptionsRestrictTheAnswerSets) {
     EXPECT_EQ(F(S(), S(1)), compile_family("asp 1 0 0\n1 1 1 1 0 0\n6 1 -2\n0\n"));
     // Assumptions do not make an atom supported: a :- b. with b assumed... b has no rule, so nothing.
     EXPECT_EQ(Family(), compile_family("asp 1 0 0\n1 0 1 1 0 1 2\n6 1 1\n0\n"));
+}
+
+TEST(Compiler, ExternalValuesFixTheFreeExternals) {
+    // #external a. [true]  #external b. [false]  #external c.  #external d. [release]  e :- a.  #external e. [false]
+    const char* text = "asp 1 0 0\n5 1 1\n5 2 2\n5 3 0\n5 4 3\n1 0 1 5 0 1 1\n5 5 2\n0\n";
+    EXPECT_EQ(16u, compile_family(text).size());  // ignored by default: a, b, c, d free, e follows a
+    CompileOptions o = no_projection();
+    o.external_values = true;
+    EXPECT_EQ(F(S(1, 5), S(1, 3, 5), S(1, 4, 5), S(1, 3, 4, 5)), compile_family(text, o));
+    // The last declaration of an atom wins.
+    EXPECT_EQ(F(S()), compile_family("asp 1 0 0\n5 1 1\n5 1 2\n0\n", o));
+    EXPECT_EQ(F(S(1)), compile_family("asp 1 0 0\n5 1 2\n5 1 1\n0\n", o));
 }
 
 TEST(Compiler, UnsupportedAtomInBodyOnly) {

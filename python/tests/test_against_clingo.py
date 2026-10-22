@@ -219,3 +219,12 @@ def test_order_file_and_bdd_export(ddasp_bin, tmp_path):
     assert names_top_down == ["p(3)", "__atom5", "p(2)", "p(1)", "__atom1"]
     bdd = kyotodd.BDD.import_binary_str(bdd_file.read_bytes())
     assert bdd.count(5) == 8  # characteristic function of 8 answer sets over 5 variables
+
+
+def test_external_values_flag(ddasp_bin, tmp_path):
+    path = tmp_path / "ext.lp"
+    path.write_text("#external a. [true] #external b. [false] #external c. d :- a. "
+                    "#show a/0. #show b/0. #show c/0. #show d/0.")
+    assert sum(ddasp_answer_sets(ddasp_bin, [path]).values()) == 8
+    got = ddasp_answer_sets(ddasp_bin, [path], "--external-values")
+    assert set(got) == {frozenset({"a", "d"})}  # `#external c.` is declared false by gringo

@@ -431,6 +431,7 @@ def compile(
     order: Union[str, Sequence[int]] = "name",
     project: bool = True,
     optimize: bool = False,
+    external_values: bool = False,
     dds: Iterable = (),
 ) -> Result:
     """Compile a :class:`Program`.
@@ -442,6 +443,10 @@ def compile(
     :param optimize: keep only the optimal answer sets (#minimize). Weights must fit
                      in 32 bits (``ValueError`` otherwise); note that clingo itself
                      truncates larger weights to 32 bits while grounding.
+    :param external_values: fix every free ``#external`` atom to its declared initial
+                            value (``#external a. [true]`` / ``[false]``; clingo declares
+                            a plain ``#external a.`` as false); by default the initial
+                            values are ignored and every external atom is free.
     :param dds: stored DDs to load (:class:`StoredDD`, :class:`Result`, file path or
                 bytes; one of them or a list). The program is compiled as it is: a
                 stored atom it uses must be ``#external`` and named in it
@@ -454,7 +459,7 @@ def compile(
     else:
         heuristic, order_atoms = "name", list(order)
     loaded = [dd.data for dd in _stored_list(dds)]
-    return Result(_core_compile(program, method, heuristic, order_atoms, project, optimize, loaded))
+    return Result(_core_compile(program, method, heuristic, order_atoms, project, optimize, external_values, loaded))
 
 
 _used_controls = weakref.WeakSet()  # controls compile_control has grounded

@@ -185,3 +185,20 @@ def test_assumptions_from_the_backend():
     with ctl.solve(yield_=True) as handle:
         models = [frozenset(str(s) for s in m.symbols(shown=True)) for m in handle]
     assert set(models) == set(res.answer_sets())
+
+
+def test_external_values():
+    import clingo
+
+    text = "#external a. [true] #external b. [false] #external c. d :- a. #show a/0. #show b/0. #show c/0. #show d/0."
+    assert ddasp.compile_text(text).count == 8  # ignored by default
+    # gringo declares an external without a value as false, so c is fixed to false too.
+    res = ddasp.compile_text(text, external_values=True)
+    assert set(res.answer_sets()) == {frozenset({"a", "d"})}
+    # clingo's default solve uses the same initial values.
+    ctl = clingo.Control(["0"])
+    ctl.add("base", [], text)
+    ctl.ground([("base", [])])
+    with ctl.solve(yield_=True) as handle:
+        models = {frozenset(str(s) for s in m.symbols(shown=True)) for m in handle}
+    assert models == {frozenset({"a", "d"})}

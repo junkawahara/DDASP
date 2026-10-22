@@ -171,13 +171,15 @@ StoredDDData parse_stored(const std::string& bytes) {
 }
 
 Result compile_py(const Program& program, const std::string& method, const std::string& order_heuristic,
-                  const std::vector<int>& order, bool project, bool optimize, const std::vector<py::bytes>& loaded) {
+                  const std::vector<int>& order, bool project, bool optimize, bool external_values,
+                  const std::vector<py::bytes>& loaded) {
     CompileOptions opts;
     opts.method = parse_method(method);
     opts.order_heuristic = parse_order_heuristic(order_heuristic);
     opts.order = order;
     opts.project_to_shown = project;
     opts.optimize = optimize;
+    opts.external_values = external_values;
     std::vector<StoredDDData> stored;
     for (size_t i = 0; i < loaded.size(); ++i) stored.push_back(parse_stored(std::string(loaded[i])));
 
@@ -281,7 +283,7 @@ PYBIND11_MODULE(_core, m) {
                  p.add_external(External(atom, static_cast<ExternalValue>(value)));
              },
              py::arg("atom"), py::arg("value") = 0,
-             "Add an #external atom (value: 0 free, 1 true, 2 false, 3 release; all are treated as free).")
+             "Add an #external atom (value: 0 free, 1 true, 2 false, 3 release; used only with external_values).")
         .def("add_projection", &Program::add_projection, py::arg("atoms"), "Record a #project statement.")
         .def("add_assumption", &Program::add_assumption, py::arg("literals"),
              "Add an assumption: every answer set must satisfy all of the literals.")
@@ -316,7 +318,7 @@ PYBIND11_MODULE(_core, m) {
 
     m.def("compile", &compile_py, py::arg("program"), py::arg("method") = "scc", py::arg("order") = "name",
           py::arg("order_atoms") = std::vector<int>(), py::arg("project") = true, py::arg("optimize") = false,
-          py::arg("loaded") = std::vector<py::bytes>(),
+          py::arg("external_values") = false, py::arg("loaded") = std::vector<py::bytes>(),
           "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images.");
 
     m.def("stored_dd_parts",
