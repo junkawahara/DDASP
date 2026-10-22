@@ -118,6 +118,25 @@ families against a brute-force oracle on random programs.
   comparison (`q(1,2) < q(1,10)`), unnamed atoms placed at the barycenter of the
   atoms they share rules with (two refinement passes). `--order id` keeps
   gringo's numbering. `CompileOptions::order` lists atoms to put on top.
+- `--order force` (`OrderHeuristic::Force`): the FORCE heuristic (Aloul, Markov,
+  Sakallah 2003) on the hypergraph with the atoms as vertices and the rules as
+  hyperedges, started from the name order: each round puts every rule at the
+  centre of gravity of its atoms and every atom at the average centre of its
+  rules, re-sorts the atoms (ties keep their order) and stops when the span, the
+  sum over the rules of the distance between their first and last atom
+  (`CompileStats::order_span`, printed by `--stats` for every heuristic), no
+  longer decreases (at most 50 rounds); the stored order of loaded DDs is then
+  re-imposed. Measured on 2026-10-22 against the name order: the span shrinks
+  everywhere (6-queens 4398 -> 2866, 10-queens 46650 -> 25232, 6x6 grid
+  3-colouring 5202 -> 5053, 4x4 grid reachability 157 -> 152), the peak node
+  count follows it only on the grid instances (reachability 1996 -> 1677,
+  colouring 116k -> 113k; the examples are unchanged) and goes the other way on
+  queens (8-queens 93k -> 289k nodes, 10-queens 1.7M -> 40M nodes and 1.6 s ->
+  88 s): the row-major name order keeps every "one queen per row" choice local,
+  which the span does not reward (the maximum cut width is the same for both
+  orders, 257 vs 256 on 8-queens, so the difference lies in the intermediate
+  conjunctions). The name order therefore stays the default and `force` is an
+  option to try.
 - All per-rule and per-atom constraints are conjoined definitions first
   (`conjoin_sorted`): a constraint that mentions an atom waits until every
   constraint defining that atom (the rules with it in the head, its support
@@ -396,6 +415,9 @@ linear; any other order is still correct, only slower.
   vectors (not per-level marginals); projected sets counted once at their smallest cost
   (consistent with the bounds and `answer sets:`); bare `K[,K..] count` lines without
   zero counts; Python dict with tuple keys in ascending order, `None` unless requested.
+- 2026-10-22: `--order force` (Python `order="force"`) added as an option; the name order stays
+  the default after the measurements in the variable-order section (FORCE minimizes the sum of
+  cut widths, which made queens much worse).
 - 2026-10-22: `--sample N` / `Result.sample`: the user chose independent uniform draws (with
   replacement) as the default and `--distinct` (`distinct=True`) for different sets; `--seed S`.
 - 2026-10-22: `--semantics stable|supported|classical` (Python `semantics=`): the user chose Clark's

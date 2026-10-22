@@ -84,7 +84,9 @@ levels free, like clingo's `--opt-mode=enum,K,...`; `+d` means the optimum
 plus d), `--cost-histogram` (`K[,K...] count` lines: the number of answer sets
 per cost vector, each projected set counted once at its smallest cost),
 `--external-values`, `--semantics stable|supported|classical`, `--method
-scc|twocopy`, `--order name|id|FILE`,
+scc|twocopy`, `--order name|id|force|FILE` (`force`: the FORCE heuristic,
+atoms move to the centre of gravity of their rules from the name order;
+`--stats` reports the `order span` it minimizes),
 `-c NAME=VALUE` (define a constant for the grounder, like gringo's `-c`,
 overriding a `#const` in the program; repeatable), `--node-max N` (bound
 KyotoDD's node table; unlimited by default), `--stats`.

@@ -666,7 +666,7 @@ ddasp [options] FILE...
 | `--external-values` | `#external` 原子を宣言の初期値(`#external a. [true]` など。無印の `#external a.` は false)に固定する。既定では初期値を無視して自由にする |
 | `--semantics stable\|supported\|classical` | 計算する族(既定 `stable` = 答集合。`supported` は Clark 完備化のモデル、`classical` はルールを含意として読んだ古典モデル)。要約行は `supported models:` / `classical models:` になる |
 | `--method scc\|twocopy` | 安定モデルの構成法(既定 `scc`、`twocopy` は参照実装。`stable` 以外では使われない) |
-| `--order name\|id\|FILE` | 変数順序(既定 `name`。FILE は上から順に並べる原子名(名前のない原子は `__atomN`)の一覧) |
+| `--order name\|id\|force\|FILE` | 変数順序(既定 `name`。`force` は FORCE ヒューリスティック: 名前順から始めて各原子をそれが現れるルールの重心へ動かし、スパン(ルールごとの最初と最後の原子の距離の和)が改善する間繰り返す。FILE は上から順に並べる原子名(名前のない原子は `__atomN`)の一覧) |
 | `--gringo CMD` | グラウンダのコマンド(`CMD --output=intermediate [-c NAME=VALUE...] FILE...` として実行) |
 | `-c NAME=VALUE` | グラウンダに定数 NAME の値を渡す(gringo の `-c` と同じ。プログラム中の `#const NAME = ...` より優先。複数指定可。`.aspif` 入力では使えない) |
 | `--node-max N` | KyotoDD のノード表を N ノードまでに制限する。超えるとメモリを使い切る代わりに明確なエラーで終了(既定は無制限) |
@@ -892,7 +892,7 @@ ddasp.compile_files(["examples/vertex_cover.lp"], best=3).best   # 上位 3 解�
 | `clingo_args=["--const", "n=8"]` | clingo に渡す引数(定数の上書きなど) |
 | `method="scc"` | `"scc"`(既定)または `"twocopy"` |
 | `semantics="stable"` | `"supported"`(Clark 完備化のモデル)または `"classical"`(古典モデル)で `--semantics` 相当 |
-| `order="name"` | `"name"`、`"id"`、または上に置く原子番号のリスト |
+| `order="name"` | `"name"`、`"id"`、`"force"`(FORCE ヒューリスティック)、または上に置く原子番号のリスト |
 | `project=True` | `False` にすると `--all-atoms` 相当、`"project"` にすると `--project` 相当(`#project` の原子へ射影) |
 | `optimize=False` | `True` で `--opt` 相当 |
 | `cost_le=None` | `--cost-le` 相当。整数(先頭の優先度の上限)または優先度の高い順の整数リスト |
@@ -1131,9 +1131,9 @@ ZDD の変数にする)では同一視されて 1 つになります。`--all-at
 `.venv/bin/python -m clingo --mode=gringo` です(引用符で囲んで 1 つの引数として渡します)。
 
 **Q. 大きな問題で時間がかかる、メモリが足りない。**
-ZDD の大きさは **変数順序** に強く依存します。`--order FILE` で原子名を上から順に
-並べたファイルを渡すと、順序を手動で調整できます。`--stats` で `zdd nodes` と
-`peak table nodes` を見ながら試してください。また、`#show` で必要な原子だけを残すと
+ZDD の大きさは **変数順序** に強く依存します。まず `--order force`(FORCE ヒューリスティック)を
+試し、`--order FILE` で原子名を上から順に並べたファイルを渡せば順序を手動で調整できます。
+`--stats` で `order span`、`zdd nodes`、`peak table nodes` を見ながら試してください。また、`#show` で必要な原子だけを残すと
 ZDD は小さくなります。なお、グラウンディング後の原子数には上限があります
 (KyotoDD の BDD 変数は 65536 個まで。原子 1 つに変数 1 つ、正のループに入る原子は 2 つ)。
 ノード数は既定では無制限で、巨大な中間 BDD はマシンのメモリを使い切ります。
