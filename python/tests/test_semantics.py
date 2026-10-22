@@ -37,8 +37,13 @@ def ground_aspif(text):
 
 
 def parse_aspif(aspif):
-    """``(rules, names, externals)``: rules as (choice, head, bound, [(lit, weight)])."""
-    rules, names, externals = [], {}, set()
+    """``(rules, names, facts, externals)``: rules as (choice, head, bound, [(lit, weight)]).
+
+    gringo emits a fact as an output with an empty condition and no rule
+    (``facts`` are those names, shown with every model); ``names`` maps the
+    atoms shown by a single positive literal to their name.
+    """
+    rules, names, facts, externals = [], {}, [], set()
     for line in aspif.splitlines():
         t = line.split()
         if not t or t[0] not in ("1", "4", "5"):
@@ -59,11 +64,13 @@ def parse_aspif(aspif):
         elif t[0] == "4":
             k = int(t[3])
             lits = [int(x) for x in t[4:4 + k]]
-            if k == 1 and lits[0] > 0:
+            if k == 0:
+                facts.append(t[2])
+            elif k == 1 and lits[0] > 0:
                 names[lits[0]] = t[2]
         else:
             externals.add(int(t[1]))
-    return rules, names, externals
+    return rules, names, facts, externals
 
 
 def body_true(X, bound, lits):
@@ -96,11 +103,11 @@ def test_random_programs_match_brute_force(semantics):
         text = random_program(random.Random(SEED + i))
         text = "\n".join(l for l in text.splitlines() if not l.startswith("#show")) + "\n"
         text += "".join(f"#show {a}/0.\n" for a in ATOMS)
-        rules, names, externals = parse_aspif(ground_aspif(text))
+        rules, names, facts, externals = parse_aspif(ground_aspif(text))
         atoms, family = brute_force_models(rules, externals, semantics)
         if len(atoms) > MAX_ATOMS:
             continue
-        expected = Counter(frozenset(names[a] for a in X if a in names) for X in family)
+        expected = Counter(frozenset(names[a] for a in X if a in names) | frozenset(facts) for X in family)
         res = ddasp.compile_text(text, semantics=semantics, project=False)
         got = Counter(res.answer_sets())
         if got != expected or res.count != len(family):
