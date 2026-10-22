@@ -296,3 +296,19 @@ def test_consequences_output_format(ddasp_bin, tmp_path):
     path.write_text("f. { a; b }. c :- a. :- not a, not b. #show f/0. #show a/0. #show b/0. #show c/0.")
     out, _ = run_ddasp(ddasp_bin, [path], "--brave", "--cautious", "--frequencies")
     assert out.splitlines() == ["answer sets: 3", "f a b c", "f", "f 3", "a 2", "b 2", "c 2"]
+
+
+def test_node_max(ddasp_bin, tmp_path):
+    path = tmp_path / "big.lp"
+    path.write_text("{ p(1..60) }. :- #count{ X : p(X) } != 30. #show p/1.")
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--count")
+    assert int(out) == 118264581564861424  # C(60, 30): unlimited by default
+    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--node-max", "2000", str(path)],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1
+    assert "node limit of 2000" in proc.stderr
+    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--node-max", "0", str(path)],
+                          capture_output=True, text=True)
+    assert proc.returncode == 2 and "positive integer" in proc.stderr
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--count", "--node-max", "10000000")
+    assert int(out) == 118264581564861424

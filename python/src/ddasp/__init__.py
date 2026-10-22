@@ -21,7 +21,7 @@ from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 import clingo
 from clingo.backend import Observer as _ClingoObserver
 
-from ddasp._core import CoreResult, Program, read_aspif
+from ddasp._core import CoreResult, NodeLimitError, Program, read_aspif
 from ddasp._core import compile as _core_compile
 from ddasp._core import stored_dd_declarations as _stored_dd_declarations
 from ddasp._core import stored_dd_image as _stored_dd_image
@@ -32,6 +32,7 @@ __all__ = [
     "Observer",
     "Result",
     "StoredDD",
+    "NodeLimitError",
     "read_aspif",
     "load",
     "compile",
@@ -458,6 +459,7 @@ def compile(
     optimize: bool = False,
     external_values: bool = False,
     dds: Iterable = (),
+    node_max: Optional[int] = None,
 ) -> Result:
     """Compile a :class:`Program`.
 
@@ -484,6 +486,10 @@ def compile(
                 (:func:`compile_control` and friends add the declarations before
                 grounding; stored *facts* are not added here); the other stored
                 atoms are added as free, named atoms.
+    :param node_max: limit on the number of nodes of KyotoDD's node table during this
+                     compilation; :class:`NodeLimitError` is raised when the diagrams
+                     need more. ``None`` (default): unlimited (a huge intermediate
+                     diagram then uses all the memory of the machine).
     """
     if isinstance(order, str):
         heuristic, order_atoms = order, []
@@ -496,8 +502,10 @@ def compile(
         use_project = False
     else:
         raise ValueError(f"project: expected True, False or 'project', got {project!r}")
+    if node_max is not None and (not isinstance(node_max, int) or node_max <= 0):
+        raise ValueError(f"node_max: expected a positive integer or None, got {node_max!r}")
     return Result(_core_compile(program, method, heuristic, order_atoms, project, use_project, optimize,
-                                external_values, loaded))
+                                external_values, loaded, node_max or 0))
 
 
 _used_controls = weakref.WeakSet()  # controls compile_control has grounded

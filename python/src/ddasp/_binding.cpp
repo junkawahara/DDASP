@@ -10,6 +10,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -30,12 +32,18 @@ namespace {
 bool g_initialized = false;
 std::mutex g_compile_mutex;  // KyotoDD is a process-wide singleton
 
+/** Raised (as ddasp.NodeLimitError) when the node_max limit stops a compilation. */
+struct NodeLimitError : std::runtime_error {
+    explicit NodeLimitError(const std::string& what) : std::runtime_error(what) {}
+};
+
 /**
- * (Re)initialize KyotoDD so that every compilation starts from level 1.
+ * (Re)initialize KyotoDD so that every compilation starts from level 1, with
+ * a node table limited to node_max nodes (0 = unlimited).
  * Returns false when the old instance had to be kept (levels then continue
- * from the previous compilation); the caller warns.
+ * from the previous compilation and the limit is not applied); the caller warns.
  */
-bool reset_kyotodd() {
+bool reset_kyotodd(uint64_t node_max) {
     bool fresh = true;
     if (g_initialized) {
         try {
@@ -45,11 +53,17 @@ bool reset_kyotodd() {
         }
     }
     if (fresh) {
-        kyotodd::bddinit(1 << 16);  // throws on failure
+        const uint64_t initial = 1 << 16;
+        if (node_max == 0) kyotodd::bddinit(initial);  // throws on failure
+        else kyotodd::bddinit(std::min(initial, node_max), node_max);
         g_initialized = true;
     }
     return fresh;
 }
+
+struct PlainResult;
+PlainResult compile_plain_in(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored,
+                             PlainResult& out);
 
 /** Plain C++ view of a compilation, built without the GIL. */
 struct PlainResult {
@@ -81,10 +95,24 @@ struct PlainResult {
     std::vector<std::pair<std::string, std::string> > frequencies;  // (name, decimal count) in display order
 };
 
-PlainResult compile_plain(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored) {
+PlainResult compile_plain(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored,
+                          uint64_t node_max) {
     std::lock_guard<std::mutex> lock(g_compile_mutex);
     PlainResult out;
-    out.fresh_instance = reset_kyotodd();
+    out.fresh_instance = reset_kyotodd(node_max);
+    try {
+        return compile_plain_in(program, opts, stored, out);
+    } catch (const std::overflow_error& e) {
+        if (node_max != 0 && std::string(e.what()).find("node table exhausted") != std::string::npos) {
+            throw NodeLimitError("the node limit of " + std::to_string(node_max) +
+                                 " nodes (node_max) was reached while building the diagrams");
+        }
+        throw;
+    }
+}
+
+PlainResult compile_plain_in(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored,
+                             PlainResult& out) {
     std::vector<LoadedDD> loaded;
     for (size_t i = 0; i < stored.size(); ++i) loaded.push_back(import_stored_dd(stored[i]));
     CompileResult res = compile(program, opts, loaded);
@@ -181,7 +209,7 @@ StoredDDData parse_stored(const std::string& bytes) {
 
 Result compile_py(const Program& program, const std::string& method, const std::string& order_heuristic,
                   const std::vector<int>& order, bool project, bool use_project_statements, bool optimize,
-                  bool external_values, const std::vector<py::bytes>& loaded) {
+                  bool external_values, const std::vector<py::bytes>& loaded, uint64_t node_max) {
     CompileOptions opts;
     opts.method = parse_method(method);
     opts.order_heuristic = parse_order_heuristic(order_heuristic);
@@ -198,12 +226,12 @@ Result compile_py(const Program& program, const std::string& method, const std::
         // The compilation only touches C++ data (the Program must not be modified
         // meanwhile); release the GIL so that other Python threads can run.
         py::gil_scoped_release release;
-        plain = compile_plain(program, opts, stored);
+        plain = compile_plain(program, opts, stored, node_max);
     }
     if (!plain.fresh_instance) {
         PyErr_WarnEx(PyExc_RuntimeWarning,
                      "ddasp: KyotoDD could not be reset (live objects remain); levels continue from the "
-                     "previous compilation", 1);
+                     "previous compilation and node_max is not applied", 1);
     }
     for (size_t i = 0; i < plain.warnings.size(); ++i) {
         PyErr_WarnEx(PyExc_RuntimeWarning, ("ddasp: " + plain.warnings[i]).c_str(), 1);
@@ -336,7 +364,10 @@ PYBIND11_MODULE(_core, m) {
           py::arg("order_atoms") = std::vector<int>(), py::arg("project") = true,
           py::arg("use_project_statements") = false, py::arg("optimize") = false,
           py::arg("external_values") = false, py::arg("loaded") = std::vector<py::bytes>(),
-          "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images.");
+          py::arg("node_max") = static_cast<uint64_t>(0),
+          "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images, "
+          "`node_max` limits KyotoDD's node table (0 = unlimited; NodeLimitError when reached).");
+    py::register_exception<NodeLimitError>(m, "NodeLimitError", PyExc_RuntimeError);
 
     m.def("stored_dd_parts",
           [](const py::bytes& data) {

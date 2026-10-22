@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -54,6 +55,7 @@ struct Options {
     std::string method = "scc";
     std::string order = "name";
     size_t enumerate_limit = 0;  // 0 = unlimited
+    uint64_t node_max = 0;       // --node-max, 0 = unlimited
 };
 
 void usage(std::ostream& os) {
@@ -103,6 +105,9 @@ void usage(std::ostream& os) {
           "                     the DD first; remaining atoms follow in name order)\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
           "                     `CMD --output=intermediate FILE...`\n"
+          "  --node-max N       limit KyotoDD's node table to N nodes; the run fails with\n"
+          "                     a clear error instead of using all memory when the\n"
+          "                     diagrams need more (default: unlimited)\n"
           "  --stats            print node counts and timings to stderr\n"
           "  -q, --quiet        do not print the summary lines\n"
           "  -h, --help         show this help\n";
@@ -163,6 +168,16 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.save_file = need_value("--save");
         } else if (a == "--load") {
             opt.load_files.push_back(need_value("--load"));
+        } else if (a == "--node-max") {
+            std::string v = need_value("--node-max");
+            char* end = 0;
+            errno = 0;
+            unsigned long long n = std::strtoull(v.c_str(), &end, 10);
+            if (v.empty() || *end != '\0' || errno != 0 || v[0] == '-' || n == 0) {
+                std::cerr << "ddasp: --node-max expects a positive integer, got '" << v << "'\n";
+                return false;
+            }
+            opt.node_max = static_cast<uint64_t>(n);
         } else if (a == "--gringo") {
             opt.gringo = need_value("--gringo");
         } else if (a == "--stats") {
@@ -363,7 +378,10 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < warnings.size(); ++i) std::cerr << "ddasp: warning: " << warnings[i] << "\n";
         double t_load = seconds_since(t0);
 
-        kyotodd::bddinit(1 << 16);  // throws on failure
+        // Initial table of 65536 nodes (or the limit, if smaller); unlimited growth unless --node-max.
+        const uint64_t initial = 1 << 16;
+        if (opt.node_max == 0) kyotodd::bddinit(initial);  // throws on failure
+        else kyotodd::bddinit(std::min(initial, opt.node_max), opt.node_max);
         std::vector<LoadedDD> loaded;
         for (size_t i = 0; i < stored.size(); ++i) {
             try {
@@ -511,6 +529,14 @@ int main(int argc, char** argv) {
             if (!out) throw std::runtime_error("cannot write stored DD file: " + opt.save_file);
         }
         return 0;
+    } catch (const std::overflow_error& e) {
+        if (opt.node_max != 0 && std::string(e.what()).find("node table exhausted") != std::string::npos) {
+            std::cerr << "ddasp: error: the node limit of " << opt.node_max
+                      << " nodes (--node-max) was reached while building the diagrams\n";
+        } else {
+            std::cerr << "ddasp: error: " << e.what() << "\n";
+        }
+        return 1;
     } catch (const std::exception& e) {
         std::cerr << "ddasp: error: " << e.what() << "\n";
         return 1;

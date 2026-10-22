@@ -235,3 +235,15 @@ def test_consequences(tmp_path, name):
     full = ddasp.compile_text(INLINE_PROGRAMS[name], project=False)
     assert {k: v for k, v in full.frequencies.items() if v} == dict(freq)
     assert list(res.frequencies) == list(res.frequencies)  # display order is stable
+
+
+def test_node_max():
+    text = "{ p(1..60) }. :- #count{ X : p(X) } != 30. #show p/1."
+    with pytest.raises(ddasp.NodeLimitError, match="node limit of 2000"):
+        ddasp.compile_text(text, node_max=2000)
+    assert issubclass(ddasp.NodeLimitError, RuntimeError)
+    # The instance is usable again afterwards, with and without a limit.
+    assert ddasp.compile_text(text, node_max=10_000_000).count == 118264581564861424
+    assert ddasp.compile_text(text).count == 118264581564861424
+    with pytest.raises(ValueError):
+        ddasp.compile_text(text, node_max=0)
