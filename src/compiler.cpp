@@ -799,6 +799,7 @@ private:
         // comes from a loaded DD (constrained by the DD only; the auxiliary
         // disjunctions gringo may put it in never support it, see compile()).
         is_external_.assign(max_atom + 1, false);
+        is_loaded_.assign(max_atom + 1, false);
         for (size_t e = 0; e < prog_.externals().size(); ++e) {
             Atom a = prog_.externals()[e].atom;
             if (rules_of_head_[a].empty()) is_external_[a] = true;
@@ -806,7 +807,7 @@ private:
         if (loaded_) {
             for (size_t d = 0; d < loaded_->size(); ++d) {
                 const std::vector<Atom>& atoms = (*loaded_)[d].atoms;
-                for (size_t k = 0; k < atoms.size(); ++k) is_external_[atoms[k]] = true;
+                for (size_t k = 0; k < atoms.size(); ++k) is_external_[atoms[k]] = is_loaded_[atoms[k]] = true;
             }
         }
     }
@@ -975,7 +976,9 @@ private:
      * Initial values of the #external atoms: a free external declared true
      * (false) is fixed to that value, the last declaration of an atom winning.
      * Atoms defined by a rule are not external (their declaration is ignored,
-     * as in clingo), and loaded atoms carry no declaration value.
+     * as in clingo). The atoms of loaded DDs are skipped: their `#external`
+     * declaration only names them (the CLI and compile_control inject a plain
+     * `#external n.`, which gringo declares false), the DD alone constrains them.
      */
     void build_external_values(std::vector<Part>& parts) const {
         std::map<Atom, ExternalValue> value;
@@ -984,7 +987,7 @@ private:
         }
         for (std::map<Atom, ExternalValue>::const_iterator it = value.begin(); it != value.end(); ++it) {
             Atom a = it->first;
-            if (!is_external_[a] || !rules_of_head_[a].empty()) continue;
+            if (!is_external_[a] || is_loaded_[a] || !rules_of_head_[a].empty()) continue;
             if (it->second != ExternalValue::True && it->second != ExternalValue::False) continue;
             Part p;
             p.bdd = it->second == ExternalValue::True ? x_of(a) : ~x_of(a);
@@ -1213,6 +1216,7 @@ private:
     std::vector<std::vector<size_t> > rules_of_head_;
     std::vector<size_t> comp_;  ///< dependency component of every atom (dependency_components)
     std::vector<bool> is_external_;
+    std::vector<bool> is_loaded_;  ///< atoms of the loaded DDs (a subset of is_external_)
     const std::vector<LoadedTarget>* loaded_;
 };
 

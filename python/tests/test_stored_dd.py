@@ -267,6 +267,19 @@ def test_python_stored_atoms_stay_visible_and_facts_are_merged():
     assert new.fact_names == ["node(1)", "node(2)", "node(3)"]
 
 
+def test_external_values_do_not_touch_the_loaded_atoms(tmp_path, ddasp_bin):
+    stored = tmp_path / "coloring.ddasp"
+    run_ddasp(ddasp_bin, [COLORING], "--save", stored)
+    # The injected `#external col(..).` declarations are false for gringo, which must not fix the atoms.
+    fix = _write(tmp_path, "fix.lp", FIX + "#external e. [true] :- e, red(2). #show e/0.")
+    got = ddasp_answer_sets(ddasp_bin, [fix], "--load", stored, "--external-values")
+    assert len(got) == 6 and all("e" in s for s in got)  # e true removes the 6 colourings with vertex 2 red
+    assert len(ddasp_answer_sets(ddasp_bin, [fix], "--load", stored)) == 12 + 6  # e free
+    old = ddasp.compile_files([COLORING])
+    assert ddasp.compile_files([fix], dds=[old], external_values=True).count == 6
+    assert ddasp.compile_files([fix], dds=[old]).count == 18
+
+
 def test_python_several_dds_and_raw_program():
     ab = ddasp.compile_text("{a;b}. :- a, b.").stored()
     bc = ddasp.compile_text("{b;c}. :- b, c.").stored()

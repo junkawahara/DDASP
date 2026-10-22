@@ -264,6 +264,7 @@ NameFamily family_plain(const std::string& aspif, const CompileOptions& opts = C
 
 std::set<std::string> N(const char* a, const char* b) { std::set<std::string> s = N(a); s.insert(b); return s; }
 std::set<std::string> N(const char* a, const char* b, const char* c) { std::set<std::string> s = N(a, b); s.insert(c); return s; }
+std::set<std::string> N(const char* a, const char* b, const char* c, const char* d) { std::set<std::string> s = N(a, b, c); s.insert(d); return s; }
 
 }  // namespace
 
@@ -414,6 +415,27 @@ TEST(LoadedDD, ProjectionAppliesToTheProgramsOwnAtoms) {
     NameFamily kept = family_with(p_new, one(d), all);
     EXPECT_EQ(6u, kept.size());
     EXPECT_TRUE(kept.count(N("a", "c", "__atom2")));
+}
+
+TEST(LoadedDD, ExternalValuesLeaveTheLoadedAtomsFree) {
+    LoadedDD d = load_from(compile_aspif(kChoice));
+    // #external a. [false]  #external b.  #external e. [true]  q :- e.  :- a, e.  #show a/0. #show b/0. #show e/0. #show q/0.
+    // (the CLI declares every loaded atom as `#external n.`, which gringo emits as false)
+    const char* p_new =
+        "asp 1 0 0\n5 1 2\n5 2 2\n5 3 1\n1 0 1 4 0 1 3\n1 0 0 0 2 1 3\n"
+        "4 1 a 1 1\n4 1 b 1 2\n4 1 e 1 3\n4 1 q 1 4\n0\n";
+    CompileOptions values;
+    values.external_values = true;
+    NameFamily got = family_with(p_new, one(d), values);
+    // e is fixed to true, so a is false; b and c follow the stored family {∅, a, b, c, ac, bc} without a.
+    NameFamily expected;
+    expected.insert(N("e", "q"));
+    expected.insert(N("b", "e", "q"));
+    expected.insert(N("c", "e", "q"));
+    expected.insert(N("b", "c", "e", "q"));
+    EXPECT_EQ(expected, got);
+    // Without the values every answer set of the stored family combines with e free (minus a with e).
+    EXPECT_EQ(10u, family_with(p_new, one(d)).size());
 }
 
 TEST(LoadedDD, InconsistentFamilyMakesTheProgramInconsistent) {
