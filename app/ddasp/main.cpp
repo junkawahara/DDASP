@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -52,6 +53,7 @@ struct Options {
     bool use_project = false;
     bool optimize = false;
     bool external_values = false;
+    std::vector<CostBound> cost_le, cost_ge, cost_eq;  // --cost-le / --cost-ge / --cost-eq (empty = none)
     std::string method = "scc";
     std::string order = "name";
     size_t enumerate_limit = 0;  // 0 = unlimited
@@ -66,8 +68,8 @@ void usage(std::ostream& os) {
           "and is read as it is; any other files are passed to gringo first (see\n"
           "--gringo). The two kinds cannot be mixed.\n"
           "\n"
-          "By default the summary lines `answer sets: N` and (with --opt) `optimum: ...`\n"
-          "are printed; -q suppresses them.\n"
+          "By default the summary lines `answer sets: N` and (with --opt or a relative\n"
+          "cost bound) `optimum: ...` are printed; -q suppresses them.\n"
           "\n"
           "Options:\n"
           "  --count            print the bare number of answer sets (meant for -q)\n"
@@ -96,6 +98,15 @@ void usage(std::ostream& os) {
           "                     instead of the shown atoms (when the program has\n"
           "                     any; unnamed ones are displayed as __atomN)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
+          "  --cost-le K[,K..]  keep only the answer sets whose #minimize cost is at most\n"
+          "                     K: one K per priority level, most important first (the\n"
+          "                     order of the `optimum:` line); cost vectors compare\n"
+          "                     lexicographically, like clingo's --opt-mode=enum,K,..,\n"
+          "                     and omitted lower levels are free. `+d` means the\n"
+          "                     optimal cost plus d (the optimum is then printed)\n"
+          "  --cost-ge K[,K..]  ... at least K (same syntax; combines with --cost-le)\n"
+          "  --cost-eq K[,K..]  ... exactly K (same syntax; not with --cost-le/--cost-ge).\n"
+          "                     None of the three combines with --opt\n"
           "  --external-values  fix every free #external atom to its declared initial\n"
           "                     value (`#external a. [true]`; gringo declares a plain\n"
           "                     `#external a.` as false); ignored by default\n"
@@ -111,6 +122,37 @@ void usage(std::ostream& os) {
           "  --stats            print node counts and timings to stderr\n"
           "  -q, --quiet        do not print the summary lines\n"
           "  -h, --help         show this help\n";
+}
+
+/**
+ * Parse a cost bound `K[,K...]`: one entry per #minimize priority level, most
+ * important first; an entry `+d` (d >= 0) is relative to the optimum of its level.
+ */
+bool parse_cost_bounds(const std::string& option, const std::string& text, std::vector<CostBound>& out) {
+    out.clear();
+    size_t start = 0;
+    while (true) {
+        size_t comma = text.find(',', start);
+        std::string item = text.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        bool relative = !item.empty() && item[0] == '+';
+        std::string digits = relative ? item.substr(1) : item;
+        bool ok = !digits.empty() && (std::isdigit(static_cast<unsigned char>(digits[0])) ||
+                                      (!relative && digits[0] == '-' && digits.size() > 1));
+        long long v = 0;
+        if (ok) {
+            char* end = 0;
+            errno = 0;
+            v = std::strtoll(digits.c_str(), &end, 10);
+            ok = *end == '\0' && errno == 0;
+        }
+        if (!ok) {
+            std::cerr << "ddasp: " << option << " expects integers K or +d separated by commas, got '" << text << "'\n";
+            return false;
+        }
+        out.push_back(CostBound(v, relative));
+        if (comma == std::string::npos) return true;
+        start = comma + 1;
+    }
 }
 
 bool parse_args(int argc, char** argv, Options& opt) {
@@ -156,6 +198,10 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.use_project = true;
         } else if (a == "--opt") {
             opt.optimize = true;
+        } else if (a == "--cost-le" || a == "--cost-ge" || a == "--cost-eq") {
+            std::string v = need_value(a.c_str());
+            std::vector<CostBound>& bounds = a == "--cost-le" ? opt.cost_le : a == "--cost-ge" ? opt.cost_ge : opt.cost_eq;
+            if (!parse_cost_bounds(a, v, bounds)) return false;
         } else if (a == "--external-values") {
             opt.external_values = true;
         } else if (a == "--method") {
@@ -201,6 +247,15 @@ bool parse_args(int argc, char** argv, Options& opt) {
     }
     if (opt.enumerate_limit != 0 && !opt.enumerate) {
         std::cerr << "ddasp: warning: --limit has no effect without --enumerate\n";
+    }
+    bool bounded = !opt.cost_le.empty() || !opt.cost_ge.empty() || !opt.cost_eq.empty();
+    if (opt.optimize && bounded) {
+        std::cerr << "ddasp: --opt cannot be combined with --cost-le/--cost-ge/--cost-eq (--cost-eq +0 means --opt)\n";
+        return false;
+    }
+    if (!opt.cost_eq.empty() && (!opt.cost_le.empty() || !opt.cost_ge.empty())) {
+        std::cerr << "ddasp: --cost-eq cannot be combined with --cost-le or --cost-ge\n";
+        return false;
     }
     return true;
 }
@@ -396,6 +451,9 @@ int main(int argc, char** argv) {
         copts.project_to_shown = !opt.all_atoms;
         copts.use_project_statements = opt.use_project;
         copts.optimize = opt.optimize;
+        copts.cost_le = opt.cost_le;
+        copts.cost_ge = opt.cost_ge;
+        copts.cost_eq = opt.cost_eq;
         copts.external_values = opt.external_values;
         copts.method = parse_method(opt.method);
         if (opt.order == "name" || opt.order == "id") {
@@ -439,7 +497,7 @@ int main(int argc, char** argv) {
         bigint::BigInt count = res.zdd.exact_count();
         if (!opt.quiet) std::cout << "answer sets: " << count.to_string() << "\n";
         else if (opt.count) std::cout << count.to_string() << "\n";
-        if (opt.optimize && !opt.quiet && !res.optimum.empty()) {
+        if (!opt.quiet && !res.optimum.empty()) {  // --opt or a relative cost bound
             std::cout << "optimum:";
             for (size_t i = 0; i < res.optimum.size(); ++i) std::cout << ' ' << res.optimum[i];
             std::cout << "\n";

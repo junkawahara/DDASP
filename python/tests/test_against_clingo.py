@@ -8,7 +8,8 @@ import clingo
 import kyotodd
 import pytest
 
-from conftest import EXAMPLES, GRINGO_CMD, clingo_answer_sets, clingo_optimum, ddasp_answer_sets, run_ddasp
+from conftest import (EXAMPLES, GRINGO_CMD, clingo_answer_sets, clingo_costed_answer_sets, clingo_optimum,
+                      ddasp_answer_sets, run_ddasp)
 
 INLINE_PROGRAMS = {
     "fact": "a. #show a/0.",
@@ -122,6 +123,101 @@ def test_optimization_matches_clingo(ddasp_bin, tmp_path, name):
     out, _ = run_ddasp(ddasp_bin, [path], "--opt")
     optimum = [int(x) for x in out.split("optimum:")[1].split()] if "optimum:" in out else None
     assert optimum == clingo_optimum([path])
+
+
+def lex_within(cost, bound, relation):
+    """Is the cost vector within the bound, compared lexicographically on the levels the bound lists?"""
+    prefix, bound = tuple(cost[:len(bound)]), tuple(bound)
+    return {"le": prefix <= bound, "ge": prefix >= bound, "eq": prefix == bound}[relation]
+
+
+def cost_bound_cases(costs):
+    """Bound vectors to try on a program whose answer sets have the given (sorted, distinct) cost vectors."""
+    if not costs:
+        return [(0,)]
+    picked = [costs[0], costs[len(costs) // 2], costs[-1]]
+    cases = set(picked)
+    cases.update(c[:1] for c in picked)  # bounds on the first level only
+    cases.add(tuple(k + 1 for k in costs[len(costs) // 2]))  # a vector no answer set may have
+    return sorted(cases)
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_cost_bounds_match_clingo(ddasp_bin, tmp_path, name):
+    path = tmp_path / f"{name}.lp"
+    path.write_text(OPT_PROGRAMS[name])
+    models = clingo_costed_answer_sets([path])
+    costs = sorted({c for _, c in models})
+    for bound in cost_bound_cases(costs):
+        text = ",".join(str(k) for k in bound)
+        for relation in ("le", "ge", "eq"):
+            expected = Counter(s for s, c in models if lex_within(c, bound, relation))
+            got = ddasp_answer_sets(ddasp_bin, [path], f"--cost-{relation}", text, "--all-atoms")
+            assert got == expected, (bound, relation)
+            projected = ddasp_answer_sets(ddasp_bin, [path], f"--cost-{relation}", text)
+            assert set(projected) == set(expected), (bound, relation)
+        # --cost-le is clingo's --opt-mode=enum,K,...
+        assert ddasp_answer_sets(ddasp_bin, [path], "--cost-le", text, "--all-atoms") == clingo_answer_sets(
+            [path], bound=bound)
+    if costs:  # both bounds combine: the answer sets between the smallest and the median cost vector
+        lo, hi = costs[0], costs[len(costs) // 2]
+        expected = Counter(s for s, c in models if lex_within(c, lo, "ge") and lex_within(c, hi, "le"))
+        got = ddasp_answer_sets(ddasp_bin, [path], "--cost-ge", ",".join(map(str, lo)), "--cost-le",
+                                ",".join(map(str, hi)), "--all-atoms")
+        assert got == expected
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_relative_cost_bounds(ddasp_bin, tmp_path, name):
+    path = tmp_path / f"{name}.lp"
+    path.write_text(OPT_PROGRAMS[name])
+    models = clingo_costed_answer_sets([path])
+    optimum = clingo_optimum([path])
+    if optimum is None:  # inconsistent: nothing to keep and no optimum to print
+        assert ddasp_answer_sets(ddasp_bin, [path], "--cost-le", "+1") == Counter()
+        out, _ = run_ddasp(ddasp_bin, [path], "--cost-le", "+1")
+        assert "optimum:" not in out
+        return
+    levels = len(optimum)
+    for slack in ([0], [1], [0] * levels, [2] * levels, [1, 0][:levels]):
+        bound = tuple(o + d for o, d in zip(optimum, slack))
+        text = ",".join(f"+{d}" for d in slack)
+        for relation in ("le", "ge", "eq"):
+            expected = Counter(s for s, c in models if lex_within(c, bound, relation))
+            got = ddasp_answer_sets(ddasp_bin, [path], f"--cost-{relation}", text, "--all-atoms")
+            assert got == expected, (text, relation)
+        out, _ = run_ddasp(ddasp_bin, [path], "--cost-le", text)  # a relative bound prints the optimum
+        assert [int(x) for x in out.split("optimum:")[1].split()] == optimum
+    # +0 on every level is --opt; an absolute bound prints no optimum; absolute and relative entries mix.
+    full = ",".join("+0" for _ in optimum)
+    assert ddasp_answer_sets(ddasp_bin, [path], "--cost-eq", full, "--all-atoms") == clingo_answer_sets(
+        [path], optimize=True)
+    out, _ = run_ddasp(ddasp_bin, [path], "--cost-le", ",".join(map(str, optimum)))
+    assert "optimum:" not in out
+    if levels > 1:
+        mixed = (optimum[0] + 1, optimum[1])
+        expected = Counter(s for s, c in models if lex_within(c, mixed, "le"))
+        assert ddasp_answer_sets(ddasp_bin, [path], "--cost-le", f"{optimum[0] + 1},+0", "--all-atoms") == expected
+
+
+def test_cost_bound_errors(ddasp_bin, tmp_path):
+    path = tmp_path / "simple.lp"
+    path.write_text(OPT_PROGRAMS["simple"])  # two priority levels (1 and 0)
+
+    def run(*args):
+        return subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, *args, str(path)], capture_output=True, text=True)
+
+    for args in (["--opt", "--cost-le", "1"], ["--cost-eq", "1", "--cost-ge", "0"], ["--cost-le", "x"],
+                 ["--cost-le", "+-1"], ["--cost-le", ""], ["--cost-le", "1,"], ["--cost-ge", " 1"]):
+        proc = run(*args)
+        assert proc.returncode == 2 and "cost" in proc.stderr, args
+    proc = run("--cost-le", "1,2,3")
+    assert proc.returncode == 1 and "only 2 #minimize priority level(s)" in proc.stderr
+    plain = tmp_path / "plain.lp"
+    plain.write_text("{ a }.")
+    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--cost-le", "1", str(plain)],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1 and "#minimize" in proc.stderr
 
 
 OPT_EXAMPLES = [p for p in STANDALONE_EXAMPLES if "#minimize" in p.read_text()]

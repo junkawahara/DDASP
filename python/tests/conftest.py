@@ -43,13 +43,15 @@ def _external_atoms(ctl):
     return [a.symbol for a in ctl.symbolic_atoms if a.is_external]
 
 
-def clingo_answer_sets(files, project=False, optimize=False):
+def clingo_answer_sets(files, project=False, optimize=False, bound=None):
     """Multiset of answer sets (frozensets of shown atom names) enumerated by clingo.
 
     #external atoms are free in ddasp, so every truth assignment of the
     externals is enumerated and the results are merged. With ``project`` the
     answer sets are projected onto the shown atoms (distinct projections);
-    with ``optimize`` only optimal answer sets are kept.
+    with ``optimize`` only optimal answer sets are kept; with ``bound`` (a cost
+    vector) only those whose cost is lexicographically at most the bound
+    (clingo's ``--opt-mode=enum,K,...``).
     """
     # --eq=0: clasp's equivalence preprocessing (default --eq=5) returns an
     # unsupported model for some disjunctive programs, e.g.
@@ -60,6 +62,8 @@ def clingo_answer_sets(files, project=False, optimize=False):
         args.append("--project=show")
     if optimize:
         args.append("--opt-mode=optN")
+    elif bound is not None:
+        args.append("--opt-mode=enum," + ",".join(str(k) for k in bound))
     else:
         args.append("--opt-mode=ignore")  # every answer set, whatever its #minimize cost
     ctl = clingo.Control(args)
@@ -69,7 +73,7 @@ def clingo_answer_sets(files, project=False, optimize=False):
     externals = _external_atoms(ctl)
     # ddasp optimizes over all assignments of the externals at once, whereas this
     # loop would optimize per assignment; the two are not comparable.
-    assert not (optimize and externals), "optimize=True is not supported with #external atoms"
+    assert not ((optimize or bound is not None) and externals), "optimize/bound are not supported with #external atoms"
     result = Counter()
     for mask in range(1 << len(externals)):
         for i, sym in enumerate(externals):
@@ -82,6 +86,24 @@ def clingo_answer_sets(files, project=False, optimize=False):
                     continue
                 result[frozenset(str(s) for s in model.symbols(shown=True))] += 1
     return result
+
+
+def clingo_costed_answer_sets(files):
+    """Every answer set as ``(frozenset of shown atom names, cost tuple)``.
+
+    ``--opt-mode=enum`` without a bound enumerates every answer set and still
+    reports its #minimize costs (``--opt-mode=ignore`` reports none).
+    """
+    ctl = clingo.Control(["0", "--eq=0", "--opt-mode=enum"], logger=lambda code, msg: None)
+    for f in files:
+        ctl.load(str(f))
+    ctl.ground([("base", [])])
+    assert not _external_atoms(ctl), "clingo_costed_answer_sets does not support #external atoms"
+    models = []
+    with ctl.solve(yield_=True) as handle:
+        for model in handle:
+            models.append((frozenset(str(s) for s in model.symbols(shown=True)), tuple(model.cost)))
+    return models
 
 
 def clingo_optimum(files):
