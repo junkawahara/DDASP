@@ -126,14 +126,25 @@ namespace {
 /**
  * Split the #show outputs into fact names, primary atom names and terms, and
  * return the set of shown atoms (named atoms plus the atoms of term conditions).
+ * `atoms` are the atoms of the program (program_atoms): a literal over any
+ * other atom is a constant (the atom is false), so a condition made of
+ * constants only is decided here: it holds (an empty condition, gringo's
+ * `#show t.` as `t : not __atomN`, `#show w : f.` for a fact f) and the name
+ * is a fact name, or it fails and the output is dropped.
  */
-std::set<Atom> collect_names(const Program& prog, CompileResult& res) {
+std::set<Atom> collect_names(const Program& prog, const std::vector<Atom>& atoms, CompileResult& res) {
     res.names = atom_names(prog);
+    std::set<Atom> known(atoms.begin(), atoms.end());
     std::set<Atom> shown;
     for (size_t o = 0; o < prog.outputs().size(); ++o) {
         const Output& out = prog.outputs()[o];
-        if (out.condition.empty()) {
-            res.fact_names.push_back(out.name);
+        bool constant = true, holds = true;
+        for (size_t i = 0; i < out.condition.size(); ++i) {
+            if (known.count(atom_of(out.condition[i]))) constant = false;
+            else if (is_positive(out.condition[i])) holds = false;
+        }
+        if (constant) {
+            if (holds) res.fact_names.push_back(out.name);
             continue;
         }
         for (size_t i = 0; i < out.condition.size(); ++i) shown.insert(atom_of(out.condition[i]));
@@ -1287,8 +1298,8 @@ CompileResult compile_with(const Program& program, const CompileOptions& options
     CompileResult res;
     res.stats.simplified_rules = simplified_rules;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    std::set<Atom> shown = collect_names(program, res);
     std::vector<Atom> atoms = program_atoms(program);
+    std::set<Atom> shown = collect_names(program, atoms, res);
     if (options.use_project_statements) {
         if (!options.project_to_shown) {
             throw std::invalid_argument("use_project_statements (--project) needs projection (not --all-atoms)");

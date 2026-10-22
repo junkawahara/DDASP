@@ -173,7 +173,11 @@ The *shown atoms* are the named atoms plus the atoms of term conditions. An
 atom that occurs in no rule and no `#external` statement (gringo gives
 `#show w : f.` with `f` a fact the condition `not __atomN` on such an atom) is
 false in every answer set: it gets no DD variable (`program_atoms`), its
-literals in conditions and `#minimize` statements are constants. With
+literals in conditions and `#minimize` statements are constants. A condition
+of constants only is decided before compiling: `#show t.` (gringo emits it as
+`t` under `not __atomN`) and `#show w : f.` for a fact `f` become fact names,
+so they are stored with the DD like `t. #show t/0.`; a condition that fails
+drops its output. With
 projection, the hidden atoms are removed from the family with `ZDD::project`,
 so answer sets that differ only in hidden atoms collapse, and the terms can
 still be evaluated on the projected sets. `CompileResult::shown_names()`

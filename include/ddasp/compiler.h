@@ -301,7 +301,9 @@ struct CompileResult {
     std::map<Atom, std::string> names;
     /**
      * @brief Names shown in every answer set: #show output statements with an empty
-     * condition (gringo emits facts this way, without naming their atom).
+     * condition (gringo emits facts this way, without naming their atom) or with a
+     * condition over atoms of no rule only that holds (`#show t.`, `#show w : f.`
+     * for a fact f; such atoms are false, so the condition is decided here).
      */
     std::vector<std::string> fact_names;
     /**

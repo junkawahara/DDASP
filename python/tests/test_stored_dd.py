@@ -1,6 +1,7 @@
 """Stored DDs: --save / --load on the command line, and the Python API."""
 
 import subprocess
+import warnings
 from collections import Counter
 
 import pytest
@@ -210,16 +211,21 @@ def test_hand_written_disjunction_over_a_stored_atom_is_rejected(tmp_path, ddasp
         ddasp.compile_files([new], dds=[ddasp.load(stored)])
 
 
-def test_show_terms_conditioned_on_facts_do_not_block_saving(tmp_path, ddasp_bin):
-    # gringo gives `#show w : f.` the condition `not __atomN` with N an atom of
-    # no rule; such an atom is false, not a DD variable, so the DD can be stored.
-    prog = _write(tmp_path, "terms.lp", "f. {a}. #show f/0. #show a/0. #show w : f.")
-    got = ddasp_answer_sets(ddasp_bin, [prog], "--save", tmp_path / "terms.ddasp")
-    assert set(got) == {frozenset({"f", "w"}), frozenset({"f", "a", "w"})}
-    res = ddasp.compile_text("f. {a}. #show f/0. #show a/0. #show w : f.")
-    with pytest.warns(RuntimeWarning, match="term"):
-        stored = res.stored()
-    assert stored.names == ["a"] and stored.fact_names == ["f"]
+def test_show_terms_conditioned_on_facts_are_stored_as_facts(tmp_path, ddasp_bin):
+    # gringo gives `#show w : f.` (f a fact) and `#show t.` the condition `not __atomN` with N
+    # an atom of no rule; such an atom is false, so the names hold in every answer set and
+    # are stored as fact names.
+    prog = _write(tmp_path, "terms.lp", "f. {a}. #show f/0. #show a/0. #show w : f. #show t.")
+    stored = tmp_path / "terms.ddasp"
+    got = ddasp_answer_sets(ddasp_bin, [prog], "--save", stored)
+    assert set(got) == {frozenset({"f", "w", "t"}), frozenset({"f", "a", "w", "t"})}
+    empty = _write(tmp_path, "empty.lp", "")
+    assert ddasp_answer_sets(ddasp_bin, [empty], "--load", stored) == got
+    res = ddasp.compile_text("f. {a}. #show f/0. #show a/0. #show w : f. #show t.")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        dd = res.stored()
+    assert dd.names == ["a"] and set(dd.fact_names) == {"f", "w", "t"} and res.terms == []
     assert ddasp.compile_text("#minimize{ 1 : a }. #show a/0.", optimize=True).optimum == []  # no rule for a
 
 

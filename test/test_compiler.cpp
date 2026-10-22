@@ -244,10 +244,12 @@ TEST(Compiler, ProjectStatementsReplaceTheShownAtoms) {
     Program q = read_aspif_string("asp 1 0 0\n1 1 2 1 2 0 0\n4 1 a 1 1\n0\n");
     EXPECT_EQ(F(S(), S(1)), family_of(compile(q, o)));
     EXPECT_TRUE(compile(q, o).warnings.empty());
-    // Terms over projected atoms (or constants) stay; a projected atom of no rule is dropped.
+    // Terms over projected atoms stay, one over constants only is a fact name; a projected
+    // atom of no rule is dropped.
     Program r = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n4 1 t 1 -1\n4 1 w 1 -5\n3 2 1 5\n0\n");
     CompileResult rr = compile(r, o);
-    EXPECT_EQ(2u, rr.terms.size());
+    EXPECT_EQ(1u, rr.terms.size());
+    EXPECT_EQ(std::vector<std::string>(1, "w"), rr.fact_names);
     EXPECT_EQ(1u, rr.vars.size());
     EXPECT_TRUE(rr.warnings.empty());
     // --project needs projection.
@@ -303,6 +305,34 @@ TEST(Compiler, FactNamesComeFromUnconditionalOutputs) {
     EXPECT_EQ(0u, res.names.count(1));
     EXPECT_EQ("c", res.atom_name(2));
     EXPECT_EQ("2", res.zdd.exact_count().to_string());
+}
+
+TEST(Compiler, ShowConditionsOverConstantsOnlyAreDecidedBeforeCompiling) {
+    // {c}. #show t. #show w : f. #show v : g. #show u : c, not f. #show c/0.
+    // gringo emits `#show t.` as `t : not __atom2` (2 has no rule); f (3) and g (4) are atoms of no rule too.
+    Program p = read_aspif_string(
+        "asp 1 0 0\n"
+        "1 1 1 1 0 0\n"
+        "4 1 t 1 -2\n"
+        "4 1 w 1 -3\n"
+        "4 1 v 1 4\n"
+        "4 1 u 2 1 -3\n"
+        "4 1 c 1 1\n"
+        "0\n");
+    CompileResult res = compile(p, CompileOptions());
+    ASSERT_EQ(2u, res.fact_names.size());  // t and w hold whatever the answer set
+    EXPECT_EQ("t", res.fact_names[0]);
+    EXPECT_EQ("w", res.fact_names[1]);
+    ASSERT_EQ(1u, res.terms.size());  // v never holds; u depends on c
+    EXPECT_EQ("u", res.terms[0].name);
+    EXPECT_EQ(1u, res.vars.size());
+    std::vector<std::string> shown = res.shown_names(std::vector<Atom>(1, 1));
+    ASSERT_EQ(4u, shown.size());
+    EXPECT_EQ("t", shown[0]);
+    EXPECT_EQ("w", shown[1]);
+    EXPECT_EQ("c", shown[2]);
+    EXPECT_EQ("u", shown[3]);
+    EXPECT_EQ(2u, res.shown_names(std::vector<Atom>()).size());
 }
 
 TEST(Compiler, CustomOrder) {

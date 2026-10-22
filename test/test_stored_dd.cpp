@@ -213,6 +213,14 @@ TEST(StoredDD, WarnsAboutDroppedTerms) {
     StoredDDData dd = parse(bytes);
     ASSERT_EQ(1u, dd.names.size());
     EXPECT_EQ("a", dd.names[0]);
+    // {a}. #show t. #show a/0.   `#show t.` arrives as `t : not __atom2`: a fact name, stored without a warning.
+    CompileResult fact = compile_aspif("asp 1 0 0\n1 1 1 1 0 0\n4 1 a 1 1\n4 1 t 1 -2\n0\n");
+    EXPECT_TRUE(fact.terms.empty());
+    warnings.clear();
+    StoredDDData fd = parse(store(fact, &warnings));
+    EXPECT_TRUE(warnings.empty());
+    ASSERT_EQ(1u, fd.fact_names.size());
+    EXPECT_EQ("t", fd.fact_names[0]);
 }
 
 TEST(StoredDD, RejectsMalformedFiles) {
