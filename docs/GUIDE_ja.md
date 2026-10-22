@@ -445,6 +445,28 @@ a c
 下位のコストに関係なく残り、等しい解だけを次の優先度で比べます。省略した下位の優先度は
 制限されません。`--opt` と同様、コストは `#show` で射影する前の解集合に対して評価されます。
 
+### コストごとの解の個数を見る(`--cost-histogram`)
+
+`--cost-histogram` は、コストの値ごとの解の個数を `コスト 個数` の行で昇順に表示します
+(解の無いコストは出ません)。`examples/minimize.lp` ではコスト 1 の解が 1 個、2 の解が 2 個、…です。
+
+```sh
+./build/ddasp --gringo "$G" --cost-histogram examples/minimize.lp
+```
+
+```
+answer sets: 6
+1 1
+2 2
+3 2
+4 1
+```
+
+複数の優先度があれば `3,5 12` のようにコスト列ごとに数えます。`#show` で射影しているときは、
+表示される集合 1 つを 1 個と数え、その集合に射影される解のうち最小のコストに割り当てます。
+したがって個数の合計は `answer sets: N` に一致し、あるコストまでの累積は `--cost-le` でそのコストを
+指定したときの個数に一致します。`--opt` や `--cost-le` と併用すると、絞り込んだ後の解について数えます。
+
 ---
 
 ## 8. さらに例題: 再帰・数え上げ・頂点被覆・ナップサック
@@ -545,6 +567,7 @@ in(2) in(3) in(4) in(6)
 ```sh
 ./build/ddasp --gringo "$G" --cost-le +1 examples/vertex_cover.lp    # answer sets: 14, optimum: 4
 ./build/ddasp --gringo "$G" --cost-eq +1 examples/vertex_cover.lp    # answer sets: 6  (5 頂点の被覆)
+./build/ddasp --gringo "$G" --cost-histogram examples/vertex_cover.lp  # 4 8 / 5 6 / 6 1: 頂点数ごとの被覆の個数
 ```
 
 ### 8.4 ナップサック問題と `#sum`(`examples/knapsack.lp`)
@@ -610,6 +633,7 @@ ddasp [options] FILE...
 | `--cost-le K[,K..]` | `#minimize` のコストが K 以下の解だけを残す。優先度ごとに高い順のコンマ区切り(`optimum:` 行の順)で、比較は clingo の `--opt-mode=enum,K,..` と同じ辞書式。省略した下位の優先度は無制限。`+d` は「最適値 + d」(最適値も表示) |
 | `--cost-ge K[,K..]` | コストが K 以上の解だけを残す(書式は同じ。`--cost-le` と併用可) |
 | `--cost-eq K[,K..]` | コストがちょうど K の解だけを残す(書式は同じ。`--cost-le` / `--cost-ge` / `--opt` とは併用不可) |
+| `--cost-histogram` | コストの値(列)ごとの解の個数を `コスト 個数` の行で昇順に表示。射影時は表示集合を最小コストで 1 個と数える(合計は `answer sets: N`) |
 | `--external-values` | `#external` 原子を宣言の初期値(`#external a. [true]` など。無印の `#external a.` は false)に固定する。既定では初期値を無視して自由にする |
 | `--method scc\|twocopy` | 安定モデルの構成法(既定 `scc`、`twocopy` は参照実装) |
 | `--order name\|id\|FILE` | 変数順序(既定 `name`。FILE は上から順に並べる原子名(名前のない原子は `__atomN`)の一覧) |
@@ -759,6 +783,9 @@ res.count, res.optimum        # (1, [1])
 
 res = ddasp.compile_files(["examples/vertex_cover.lp"], cost_slack=1)
 res.count, res.optimum        # (14, [4])   最適値 + 1 まで(--cost-le +1 相当)
+
+res = ddasp.compile_files(["examples/vertex_cover.lp"], cost_histogram=True)
+res.cost_histogram            # {(4,): 8, (5,): 6, (6,): 1}  コストごとの解の個数
 ```
 
 `compile_text` / `compile_files` の主なキーワード引数:
@@ -773,6 +800,7 @@ res.count, res.optimum        # (14, [4])   最適値 + 1 まで(--cost-le +1 �
 | `cost_le=None` | `--cost-le` 相当。整数(先頭の優先度の上限)または優先度の高い順の整数リスト |
 | `cost_ge=None`, `cost_eq=None` | `--cost-ge` / `--cost-eq` 相当(同じ形式) |
 | `cost_slack=None` | `--cost-le +d` 相当。最適値からの余裕 `d`(非負の整数またはリスト)。`res.optimum` も埋まる |
+| `cost_histogram=False` | `True` で `--cost-histogram` 相当。`res.cost_histogram` が `{(コスト, ...): 個数}` の dict(昇順。指定しなければ `None`) |
 | `external_values=False` | `True` で `--external-values` 相当(`#external` の初期値で固定) |
 | `dds=[...]` | `--load` 相当。読み込む保存 DD(`StoredDD`、`Result`、ファイルパス、bytes)のリスト |
 | `node_max=None` | `--node-max` 相当。ノード数の上限(超えると `ddasp.NodeLimitError`)。`None` で無制限 |
@@ -1028,6 +1056,7 @@ KyotoDD で直接作った ZDD も `StoredDD.from_zdd` で同じように使え�
 `--cost-le +1` のように `+d` で「最適値 + d 以下」の解が残ります(`optimum:` 行も表示)。
 絶対値なら `--cost-le 5`、下限や等号は `--cost-ge` / `--cost-eq` です(7 章)。Python では
 `cost_slack=1` / `cost_le=5` などを `compile_text` / `compile_files` に渡します(10 章)。
+コストごとの解の個数は `--cost-histogram`(Python では `cost_histogram=True`)で分かります。
 
 **Q. 仕組みをもっと知りたい。**
 [docs/DESIGN.md](DESIGN.md) に、安定モデル意味論を BDD で構成する方法

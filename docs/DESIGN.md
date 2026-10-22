@@ -186,6 +186,19 @@ projection like `--opt`; `--opt` excludes them, `--cost-eq` excludes the other
 two, and a bound with more entries than priority levels (or without any
 `#minimize`) is rejected before compiling.
 
+The cost histogram (`--cost-histogram`, `CompileOptions::cost_histogram`,
+Python `cost_histogram=True`) lists the number of answer sets per cost vector.
+Under projection each projected set counts once, at the lexicographically
+smallest cost vector of the answer sets projecting to it (the reading of the
+bounds), so the counts add up to the number of answer sets and the cumulative
+count at a vector is the count of `--cost-le` there. It is computed before
+projection by peeling the family: the lexicographic optimum of what is left
+(as `--opt` finds it) is projected and united with the projected sets seen so
+far, the growth of that union is the count, and the optimal sets are removed.
+This costs a few `cost_bound` passes and one projection per distinct vector
+but needs no per-node cost tables (a node-wise convolution would take
+nodes × distinct vectors memory and could not count projected sets).
+
 ## Conversions and deep diagrams
 
 KyotoDD's `BDD::to_zdd` / `ZDD::to_bdd` work on levels, and the binary export
@@ -320,3 +333,7 @@ linear; any other order is still correct, only slower.
   lexicographic comparison of clingo's `--opt-mode=enum,K,...` for several priority levels
   (verified against clingo), relative entries `+d` on top of absolute ones, and the lower
   and equality bounds alongside the upper one; `--opt` is not combined with them.
+- 2026-10-22: `--cost-histogram` / `cost_histogram=True`: the joint distribution over cost
+  vectors (not per-level marginals); projected sets counted once at their smallest cost
+  (consistent with the bounds and `answer sets:`); bare `K[,K..] count` lines without
+  zero counts; Python dict with tuple keys in ascending order, `None` unless requested.
