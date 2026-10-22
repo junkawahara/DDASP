@@ -859,7 +859,7 @@ import ddasp
 
 res = ddasp.compile_text("{ a; b }. :- a, b. #show a/0. #show b/0.")
 res.count                     # 3
-list(res.answer_sets())       # [frozenset(), frozenset({'b'}), frozenset({'a'})]
+list(res.answer_sets())       # [frozenset(), frozenset({'a'}), frozenset({'b'})]
 res.names                     # {1: 'a', 2: 'b'}   原子番号 -> 名前
 res.levels                    # [2, 1]             DD の上から順のレベル
 ```

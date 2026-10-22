@@ -301,7 +301,10 @@ class Result:
         Each set holds the fact names, the names of its atoms and the terms
         whose conditions hold, like clingo's output. Unnamed (hidden) atoms are
         left out, so without projection the same frozenset can be yielded
-        several times.
+        several times. The sets are taken from the ZDD one at a time (kyotodd's
+        ``iter_rank``, the order of ``rank`` / ``unrank``), so the first ones of
+        a huge family cost nothing; ``list(...)`` of such a family does not fit
+        in memory, of course.
 
         With ``by_cost`` the answer sets come in ascending ``#minimize`` cost order
         as ``(cost, answer_set)`` pairs, the cost a tuple with one entry per
@@ -316,7 +319,7 @@ class Result:
             yield from self._answer_sets_by_cost()
             return
         decode = self._set_decoder()
-        for s in self.zdd.enumerate():
+        for s in self.zdd.iter_rank():
             yield decode(s)
 
     def sample(self, k: int = 1, seed: Optional[int] = None, distinct: bool = False) -> list:
@@ -401,7 +404,7 @@ class Result:
                 m = best.min_weight(w)
                 best = best.cost_bound_le(w, m)
                 cost.append(m + offset)
-            for s in best.enumerate():
+            for s in best.iter_rank():
                 yield tuple(cost), decode(s)
             rest = rest - best
 
@@ -535,12 +538,12 @@ class StoredDD:
         return int(self.zdd.exact_count)
 
     def answer_sets(self) -> Iterator[frozenset]:
-        """Iterate over the stored answer sets as frozensets of names (via kyotodd)."""
+        """Iterate over the stored answer sets as frozensets of names (via kyotodd), one at a time."""
         import kyotodd
 
         facts = frozenset(self._fact_names)
         n = len(self._names)
-        for s in self.zdd.enumerate():
+        for s in self.zdd.iter_rank():
             yield facts | frozenset(self._names[n - kyotodd.to_level(v)] for v in s)
 
     def __repr__(self) -> str:

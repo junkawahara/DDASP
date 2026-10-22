@@ -220,6 +220,24 @@ def test_variables_of_atoms_true_in_no_answer_set():
     assert kyotodd.to_var(len(stored.names)) and stored.count == 2 and stored.zdd.exact_count == 2
 
 
+def test_answer_sets_are_taken_from_the_zdd_one_at_a_time():
+    # 2^50 answer sets: materializing the family is impossible, the first ones are instant.
+    res = ddasp.compile_text("{ a(1..50) }. #show a/1.")
+    assert res.count == 2**50
+    it = res.answer_sets()
+    first = [next(it) for _ in range(3)]
+    assert all(isinstance(s, frozenset) for s in first) and len(set(first)) == 3
+    stored = res.stored()
+    assert next(stored.answer_sets()) == first[0]
+    # by_cost with several priority levels peels cost classes; each class is iterated lazily too.
+    costed = ddasp.compile_text("{ a(1..50) }. #minimize { 1@2,X : a(X) }. #minimize { 1@1,X : a(X), X > 25 }. #show a/1.")
+    cost, s = next(costed.answer_sets(by_cost=True))
+    assert cost == (0, 0) and s == frozenset()
+    # The documented order of the small example (kyotodd's rank order).
+    small = ddasp.compile_text("{ a; b }. :- a, b. #show a/0. #show b/0.")
+    assert list(small.answer_sets()) == [frozenset(), frozenset({"a"}), frozenset({"b"})]
+
+
 def test_show_terms():
     res = ddasp.compile_text("{ a }. #show a/0. #show t : a. #show u : not a.")
     assert res.names == {1: "a"}
