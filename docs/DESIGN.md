@@ -361,6 +361,11 @@ linear; any other order is still correct, only slower.
   vectors (not per-level marginals); projected sets counted once at their smallest cost
   (consistent with the bounds and `answer sets:`); bare `K[,K..] count` lines without
   zero counts; Python dict with tuple keys in ascending order, `None` unless requested.
+- 2026-10-22: `--json` prints one JSON object with the keys of the Python `Result` (`count`,
+  `optimum`, `brave`, `cautious`, `frequencies`, `cost_histogram`, `stats`, `answer_sets`), only
+  the requested items, the answer sets streamed into an array (`{cost, atoms}` objects with
+  `--by-cost`) and counts as JSON integers; the user chose this over clingo's `--outf=2` layout
+  and JSON Lines.
 - 2026-10-22: `-c NAME=VALUE` (CLI only; Python passes `clingo_args=["-c", "n=8"]`) is forwarded
   to the grounder as gringo's `-c` and rejected with aspif input (already ground).
 - 2026-10-22: `python/tests/test_random_programs.py` checks ddasp against clingo on a seeded

@@ -55,6 +55,7 @@ G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp --gringo "$G" --cost-histogram examples/vertex_cover.lp  # 4 8 / 5 6 / 6 1
 ./build/ddasp --gringo "$G" --by-cost --limit 3 examples/vertex_cover.lp  # the 3 best: `4: in(2) ...`
 ./build/ddasp --gringo "$G" --brave --cautious --frequencies examples/queens.lp
+./build/ddasp --gringo "$G" --json --enumerate --frequencies examples/choice.lp  # one JSON object
 ./build/ddasp --gringo "$G" --node-max 50000000 prog.lp           # fail instead of swapping
 ./build/ddasp --gringo "$G" -o out.zdd --atoms atoms.txt prog.lp
 ./build/ddasp prog.aspif                                        # already ground
@@ -83,7 +84,12 @@ overriding a `#const` in the program; repeatable), `--node-max N` (bound
 KyotoDD's node table; unlimited by default), `--stats`.
 The summary lines `answer sets: N` and (with `--opt` or a relative bound)
 `optimum: ...` are printed by default; `-q` suppresses them and `-q --count`
-prints the bare count.
+prints the bare count. `--json` prints one JSON object instead of all the
+text output, with the keys of the Python `Result`: `count`, `optimum`, and
+the items the other options request (`brave`, `cautious`, `frequencies`,
+`cost_histogram`, `stats`, `answer_sets`); the answer sets are written as
+they are found, with `--by-cost` as `{"cost": [..], "atoms": [..]}` objects,
+counts are JSON integers, and `-q` / `--count` are ignored.
 
 The binary format records DD *levels*; the `--atoms` table lists the level of
 every atom. Importing the file in a fresh KyotoDD process gives variable

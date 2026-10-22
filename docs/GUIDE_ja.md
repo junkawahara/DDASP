@@ -668,6 +668,7 @@ ddasp [options] FILE...
 | `--node-max N` | KyotoDD のノード表を N ノードまでに制限する。超えるとメモリを使い切る代わりに明確なエラーで終了(既定は無制限) |
 | `--stats` | ノード数と所要時間を標準エラー出力に表示 |
 | `-q`, `--quiet` | `answer sets: N` と `optimum: ...` の行を表示しない |
+| `--json` | 結果を 1 つの JSON オブジェクトで出力する(`count`、`optimum` と、他のオプションで求めた `brave` / `cautious` / `frequencies` / `cost_histogram` / `stats` / `answer_sets`。`--by-cost` では各解が `{"cost": [..], "atoms": [..]}`。`-q` と `--count` は無視) |
 
 ### 解全体の性質を調べる(`--brave` / `--cautious` / `--frequencies`)
 
@@ -694,6 +695,33 @@ q(1,3) 1
 変数順に並べたもの)なので、そのまま別のプログラムの入力にできます。`--frequencies` の個数は
 射影後の解集合に対するものです(`--all-atoms` なら全解集合)。`-q` を付けても表示されます。
 Python では `res.brave`、`res.cautious`、`res.frequencies` で同じものが得られます(10 章)。
+
+### JSON で出力する(`--json`)
+
+スクリプトから結果を読むときは `--json` を付けます。標準出力が 1 つの JSON オブジェクトになり、
+`count`(解の個数)、`optimum`(`--opt` や `+d` 付きの境界を使ったとき)と、他のオプションで求めた
+項目(`--brave` → `brave`、`--cautious` → `cautious`、`--frequencies` → `frequencies`、
+`--cost-histogram` → `cost_histogram`、`--stats` → `stats`、`--enumerate` → `answer_sets`)だけが
+入ります。キーは Python の `Result` の属性名と同じです。解は見つかった順に書き出されるので、
+大きな族でも `--limit` と組み合わせて使えます。
+
+```sh
+./build/ddasp --gringo "$G" --json --enumerate --limit 2 --frequencies examples/choice.lp
+```
+
+```json
+{
+  "count": 7,
+  "frequencies": {"a": 3, "b": 3, "c": 3},
+  "answer_sets": [
+    [],
+    ["c"]
+  ]
+}
+```
+
+`--by-cost` では各解が `{"cost": [..], "atoms": [..]}` になり、`--cost-histogram` は
+`[{"cost": [..], "count": N}, ...]` です。個数は JSON の整数のまま(桁数の制限なし)書きます。
 
 ### ZDD をファイルに保存する
 
