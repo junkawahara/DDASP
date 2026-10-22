@@ -38,6 +38,7 @@ namespace {
 struct Options {
     std::vector<std::string> inputs;
     std::string gringo = "gringo";
+    std::vector<std::string> constants;  // -c NAME=VALUE, passed to the grounder
     std::string output;       // -o
     std::string atoms_file;   // --atoms
     std::string save_file;    // --save
@@ -125,7 +126,9 @@ void usage(std::ostream& os) {
           "                     file with one atom name (or __atomN) per line (top of\n"
           "                     the DD first; remaining atoms follow in name order)\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
-          "                     `CMD --output=intermediate FILE...`\n"
+          "                     `CMD --output=intermediate [-c NAME=VALUE...] FILE...`\n"
+          "  -c NAME=VALUE      define the constant NAME as VALUE for the grounder (like\n"
+          "                     gringo's -c; may be repeated); not with aspif input\n"
           "  --node-max N       limit KyotoDD's node table to N nodes; the run fails with\n"
           "                     a clear error instead of using all memory when the\n"
           "                     diagrams need more (default: unlimited)\n"
@@ -239,6 +242,14 @@ bool parse_args(int argc, char** argv, Options& opt) {
                 return false;
             }
             opt.node_max = static_cast<uint64_t>(n);
+        } else if (a == "-c" || a == "--const") {
+            std::string v = need_value("-c");
+            size_t eq = v.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == v.size()) {
+                std::cerr << "ddasp: -c expects NAME=VALUE, got '" << v << "'\n";
+                return false;
+            }
+            opt.constants.push_back(v);
         } else if (a == "--gringo") {
             opt.gringo = need_value("--gringo");
         } else if (a == "--stats") {
@@ -319,6 +330,7 @@ struct TempProgram {
  */
 std::string run_gringo(const Options& opt, const std::string& declarations) {
     std::string cmd = opt.gringo + " --output=intermediate";
+    for (size_t i = 0; i < opt.constants.size(); ++i) cmd += " -c " + shell_quote(opt.constants[i]);
     for (size_t i = 0; i < opt.inputs.size(); ++i) cmd += " " + shell_quote(opt.inputs[i]);
     std::unique_ptr<TempProgram> extra;
     if (!declarations.empty()) {
@@ -355,6 +367,9 @@ Program load_program(const Options& opt, const std::string& declarations, std::v
     }
     if (aspif_count == opt.inputs.size()) {
         if (opt.inputs.size() != 1) throw std::runtime_error("only one aspif file can be given");
+        if (!opt.constants.empty()) {
+            throw std::runtime_error("-c cannot be used with aspif input (the program is already ground)");
+        }
         return read_aspif_file(opt.inputs[0], &warnings);
     }
     if (aspif_count != 0) {

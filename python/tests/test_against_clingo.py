@@ -510,3 +510,22 @@ def test_node_max(ddasp_bin, tmp_path):
     assert proc.returncode == 2 and "positive integer" in proc.stderr
     out, _ = run_ddasp(ddasp_bin, [path], "-q", "--count", "--node-max", "10000000")
     assert int(out) == 118264581564861424
+
+
+def test_constants_are_passed_to_the_grounder(ddasp_bin, tmp_path):
+    path = tmp_path / "p.lp"
+    path.write_text("#const n = 2. #const m = 0. { p(1..n) }. :- #count{ X : p(X) } < m. #show p/1.")
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--count")
+    assert out.strip() == "4"
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--count", "-c", "n=3")  # -c overrides #const
+    assert out.strip() == "8"
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--count", "-c", "n=3", "--const", "m=3")
+    assert out.strip() == "1"
+    for bad in ("n", "=3", "n="):
+        proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "-c", bad, str(path)],
+                              capture_output=True, text=True)
+        assert proc.returncode != 0 and "NAME=VALUE" in proc.stderr
+    aspif = tmp_path / "p.aspif"
+    aspif.write_text("asp 1 0 0\n0\n")
+    proc = subprocess.run([str(ddasp_bin), "-c", "n=3", str(aspif)], capture_output=True, text=True)
+    assert proc.returncode != 0 and "aspif" in proc.stderr
