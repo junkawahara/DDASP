@@ -114,6 +114,12 @@ struct CompileOptions {
      */
     bool cost_histogram;
     /**
+     * Fill CompileResult::best with the first `best` answer sets in ascending
+     * #minimize cost order (enumerate_by_cost in cost_order.h); 0 = none.
+     * Requires a #minimize statement.
+     */
+    size_t best;
+    /**
      * Atom order for the DD variables, listed from the top of the diagram down.
      * Atoms of the program missing from the list are appended below the listed
      * ones in the order given by @c order_heuristic.
@@ -122,7 +128,8 @@ struct CompileOptions {
 
     CompileOptions()
         : method(Method::Scc), order_heuristic(OrderHeuristic::NaturalName), project_to_shown(true),
-          use_project_statements(false), optimize(false), external_values(false), cost_histogram(false) {}
+          use_project_statements(false), optimize(false), external_values(false), cost_histogram(false),
+          best(0) {}
 };
 
 /**
@@ -151,6 +158,12 @@ struct CostFunction {
 struct CostCount {
     std::vector<long long> cost;
     bigint::BigInt count;
+};
+
+/** @brief An answer set with its #minimize cost vector (CompileResult::best). */
+struct CostedSet {
+    std::vector<long long> cost;  ///< one cost per priority level, most important first
+    std::vector<Atom> atoms;      ///< the atoms of the (projected) answer set, top level first
 };
 
 /** @brief Timing and size statistics of a compilation (seconds / node counts). */
@@ -217,6 +230,12 @@ struct CompileResult {
      * Projected onto the shown atoms and/or restricted to the optimal answer sets as requested.
      */
     kyotodd::ZDD zdd;
+    /**
+     * @brief The answer sets before projection, over every atom variable: @c zdd
+     * is this family projected onto @c vars (the same family when nothing is
+     * hidden). Kept for cost-ordered enumeration (cost_order.h).
+     */
+    kyotodd::ZDD family;
     /** @brief Characteristic function of @c zdd over @c vars. */
     kyotodd::BDD bdd;
     /** @brief Variables of the answer-set family (atom variables), top level first. */
@@ -233,6 +252,8 @@ struct CompileResult {
      * without the vectors of no answer set; filled only with CompileOptions::cost_histogram.
      */
     std::vector<CostCount> cost_histogram;
+    /** @brief The first CompileOptions::best answer sets in ascending cost order (empty unless requested). */
+    std::vector<CostedSet> best;
     /** @brief Statistics of the compilation. */
     CompileStats stats;
     /** @brief var_to_atom[v] = atom of DD variable v (0 for variables not used by this result). */
@@ -277,7 +298,7 @@ const size_t kMaxBddVariables = 65536;
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
  *         when optimizing or bounding costs with a #minimize weight outside the
  *         32-bit range, a cost bound with more entries than #minimize priority
- *         levels, a cost bound or cost_histogram without any #minimize
+ *         levels, a cost bound, cost_histogram or best without any #minimize
  *         statement, cost bounds combined as CompileOptions forbids, more variables needed than kMaxBddVariables,
  *         use_project_statements without project_to_shown).
  */

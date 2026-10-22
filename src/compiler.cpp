@@ -9,6 +9,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "ddasp/cost_order.h"
 #include "ddasp/dd_util.h"
 #include "ddasp/stored_dd.h"
 
@@ -605,11 +606,22 @@ public:
             res.cost_histogram = build_cost_histogram(family, hidden, res);
             st.histogram_time = t.lap();
         }
+        res.family = family;
         if (!hidden.empty()) family = family.project(hidden);
         res.zdd = family;
         res.bdd = zdd_to_bdd_over(family, res.vars);
         st.project_time = t.lap();
         note_peak(st);
+        if (options_.best != 0) {
+            size_t taken = 0;
+            enumerate_by_cost(res, [&](const std::vector<long long>& cost, const std::vector<bddvar>& set) -> bool {
+                CostedSet s;
+                s.cost = cost;
+                for (size_t i = 0; i < set.size(); ++i) s.atoms.push_back(res.var_to_atom[set[i]]);
+                res.best.push_back(s);
+                return ++taken < options_.best;
+            });
+        }
         return res;
     }
 
@@ -1135,7 +1147,7 @@ void apply_project_statements(const Program& prog, const std::vector<Atom>& atom
 /** Reject cost options that cannot be applied (see CompileOptions::cost_le and cost_histogram). */
 void validate_cost_options(const Program& program, const CompileOptions& o) {
     size_t n = std::max(o.cost_le.size(), std::max(o.cost_ge.size(), o.cost_eq.size()));
-    if (n == 0 && !o.cost_histogram) return;
+    if (n == 0 && !o.cost_histogram && o.best == 0) return;
     if (n != 0) {
         if (o.optimize) {
             throw std::invalid_argument("optimize (--opt) cannot be combined with a cost bound (cost_le/cost_ge/cost_eq)");
@@ -1148,8 +1160,9 @@ void validate_cost_options(const Program& program, const CompileOptions& o) {
     std::set<int> priorities;
     for (size_t m = 0; m < program.minimizes().size(); ++m) priorities.insert(program.minimizes()[m].priority);
     if (priorities.empty()) {
-        throw std::invalid_argument(std::string(n != 0 ? "a cost bound" : "the cost histogram (--cost-histogram)") +
-                                    " needs a #minimize statement, but the program has none");
+        const char* what = n != 0 ? "a cost bound" : o.cost_histogram ? "the cost histogram (--cost-histogram)"
+                                                                    : "the cost-ordered enumeration (best)";
+        throw std::invalid_argument(std::string(what) + " needs a #minimize statement, but the program has none");
     }
     if (n > priorities.size()) {
         throw std::invalid_argument("the cost bound has " + std::to_string(n) + " entries, but the program has only " +
