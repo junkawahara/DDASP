@@ -7,7 +7,7 @@ kyotodd = pytest.importorskip("kyotodd")
 
 from conftest import clingo_answer_sets, clingo_costed_answer_sets, clingo_optimum  # noqa: E402
 from test_against_clingo import (INLINE_PROGRAMS, OPT_PROGRAMS, STANDALONE_EXAMPLES,  # noqa: E402
-                                 cost_bound_cases, lex_within)
+                                 cost_bound_cases, expected_histogram, lex_within)
 
 
 def _write(tmp_path, name, programs=INLINE_PROGRAMS):
@@ -76,6 +76,29 @@ def test_cost_bounds(tmp_path, name):
     both = ddasp.compile_text(text, cost_ge=optimum[0] + 1, cost_slack=1)  # cost_ge combines with cost_slack
     assert set(both.answer_sets()) == {s for s, c in models if c[0] == optimum[0] + 1}
     assert both.optimum == optimum
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_cost_histogram(tmp_path, name):
+    path = _write(tmp_path, name, OPT_PROGRAMS)
+    text = OPT_PROGRAMS[name]
+    models = clingo_costed_answer_sets([path])
+    assert ddasp.compile_text(text).cost_histogram is None  # only on request
+    res = ddasp.compile_text(text, cost_histogram=True)
+    expected = expected_histogram(models, project=True)
+    assert list(res.cost_histogram.items()) == expected  # tuple keys in ascending order
+    assert sum(res.cost_histogram.values()) == res.count
+    assert res.cost_histogram is not res.cost_histogram  # a fresh dict each time
+    full = ddasp.compile_text(text, project=False, cost_histogram=True)
+    assert list(full.cost_histogram.items()) == expected_histogram(models, project=False)
+    best = ddasp.compile_text(text, optimize=True, cost_histogram=True)
+    if expected:
+        assert best.cost_histogram == {tuple(best.optimum): expected[0][1]}
+    else:
+        assert best.cost_histogram == {} and res.count == 0
+    assert "histogram_time" in res.stats
+    with pytest.raises(ValueError):
+        ddasp.compile_text("{ a }.", cost_histogram=True)  # no #minimize statement
 
 
 def test_cost_bound_arguments():

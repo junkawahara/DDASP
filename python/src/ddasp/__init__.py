@@ -122,10 +122,11 @@ class Result:
     diagrams the atom of a variable ``v`` is ``level_to_atom[kyotodd.to_level(v)]``.
     """
 
-    def __init__(self, core: CoreResult):
+    def __init__(self, core: CoreResult, cost_histogram: Optional[dict] = None):
         self._core = core
         self._zdd = None
         self._bdd = None
+        self._cost_histogram = cost_histogram
         # The core maps are std::map objects that pybind11 converts to a new dict
         # on every access; convert them once.
         self._names = dict(core.names)
@@ -195,6 +196,18 @@ class Result:
         empty otherwise.
         """
         return list(self._core.optimum)
+
+    @property
+    def cost_histogram(self) -> Optional[dict]:
+        """Number of answer sets per ``#minimize`` cost vector: ``{(k1, k2, ...): count}``.
+
+        Keys are tuples (one cost per priority level, most important first) in
+        ascending lexicographic order; costs of no answer set are absent. Under
+        projection every projected set counts once, at the smallest cost vector of
+        the answer sets projecting to it, so the counts add up to :attr:`count`.
+        ``None`` unless the compilation asked for it (``cost_histogram=True``).
+        """
+        return None if self._cost_histogram is None else dict(self._cost_histogram)
 
     @property
     def count(self) -> int:
@@ -481,6 +494,7 @@ def compile(
     cost_ge: Union[int, Sequence[int], None] = None,
     cost_eq: Union[int, Sequence[int], None] = None,
     cost_slack: Union[int, Sequence[int], None] = None,
+    cost_histogram: bool = False,
 ) -> Result:
     """Compile a :class:`Program`.
 
@@ -526,6 +540,10 @@ def compile(
                        most the optimum plus the slack, level by level, and fills
                        :attr:`Result.optimum`. ``cost_slack=0`` on every level is
                        ``optimize=True``. Not with ``cost_le`` or ``optimize``.
+    :param cost_histogram: also count the answer sets per ``#minimize`` cost vector
+                           (:attr:`Result.cost_histogram`; needs a ``#minimize``
+                           statement). The histogram describes the result, i.e. the
+                           answer sets left after ``optimize`` or the cost bounds.
     """
     if isinstance(order, str):
         heuristic, order_atoms = order, []
@@ -548,9 +566,11 @@ def compile(
         raise ValueError("cost_le and cost_slack cannot be combined (both are upper bounds)")
     if eq and (le or ge or slack):
         raise ValueError("cost_eq cannot be combined with cost_le, cost_ge or cost_slack")
-    return Result(_core_compile(program, method, heuristic, order_atoms, project, use_project, optimize,
-                                external_values, loaded, node_max or 0, cost_le=le, cost_ge=ge, cost_eq=eq,
-                                cost_slack=slack))
+    core = _core_compile(program, method, heuristic, order_atoms, project, use_project, optimize, external_values,
+                         loaded, node_max or 0, cost_le=le, cost_ge=ge, cost_eq=eq, cost_slack=slack,
+                         cost_histogram=cost_histogram)
+    histogram = {tuple(cost): int(count) for cost, count in core.cost_histogram} if cost_histogram else None
+    return Result(core, histogram)
 
 
 _used_controls = weakref.WeakSet()  # controls compile_control has grounded
