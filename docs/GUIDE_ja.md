@@ -644,6 +644,9 @@ ddasp [options] FILE...
 | `--count` | 解集合の個数だけを(`answer sets:` を付けずに)表示。`-q` と組み合わせて使う |
 | `--enumerate` | すべての解集合を 1 行ずつ表示(原子は変数順 = 名前順) |
 | `--limit N` | `--enumerate` で最大 N 個だけ表示(`0` = すべて)。ZDD から順に取り出すので大きな族でも軽い |
+| `--sample N` | 解を一様ランダムに N 個取り出して 1 行ずつ表示(復元抽出なので同じ解が複数回出ることがある。射影後の各表示集合が等確率。解が無ければ何も出ない) |
+| `--distinct` | `--sample` で重複しない N 個をランダムな順に表示(N が解の個数以上なら全部) |
+| `--seed S` | 乱数の種(既定はランダム) |
 | `--by-cost` | 解をコストの小さい順に `コスト: 原子...` の行で表示(`--enumerate` を含む。`--limit N` で上位 N 解)。射影時は表示集合を最小コストの位置に 1 回だけ表示 |
 | `--brave` | **勇敢帰結**: どれかの解集合に現れる名前を 1 行に表示(解集合と同じ形式) |
 | `--cautious` | **慎重帰結**: すべての解集合に現れる名前を 1 行に表示(解が無ければ空行) |
@@ -688,6 +691,21 @@ ddasp [options] FILE...
 注意: どの意味論も gringo が出力したグラウンドプログラムに対するものです。集約や `not not` の
 書き換えで gringo が導入する補助原子も普通の原子として扱われるので、supported / classical の
 個数は元のプログラムを手で解釈したものと違うことがあります。
+
+### 解をランダムに取り出す(`--sample`)
+
+解が多すぎて列挙できないときは、`--sample N` で一様ランダムに N 個取り出せます。ZDD からは
+一様サンプリングが(個数の計算と同じ 1 回の走査で)厳密にできるので、ASP ソルバでは難しい
+「解の一様サンプル」が簡単に得られます。既定は復元抽出(独立な N 回の抽出)で、`--distinct` を
+付けると重複しない N 個になります。`--seed S` で再現できます。
+
+```sh
+./build/ddasp --gringo "$G" --sample 3 --seed 1 examples/queens.lp
+./build/ddasp --gringo "$G" --sample 3 --distinct --seed 1 examples/coloring.lp
+```
+
+確率は射影後の表示集合ごとに等しくなります。隠れた原子の数で重み付けしたい(元の解集合ごとに
+等確率にしたい)ときは `--all-atoms` を付けます。Python では `res.sample(k, seed=, distinct=)` です。
 
 ### 解全体の性質を調べる(`--brave` / `--cautious` / `--frequencies`)
 
@@ -894,6 +912,7 @@ res = ddasp.compile_files(["examples/queens.lp"])
 res.brave                     # frozenset({'q(1,2)', 'q(1,3)', ...})  どれかの解に入る原子
 res.cautious                  # frozenset()                          すべての解に入る原子
 res.frequencies               # {'q(1,1)': 0, 'q(1,2)': 1, ...}      原子ごとの解の個数(表示順)
+res.sample(5, seed=1)         # 一様ランダムな 5 個の解(frozenset のリスト。distinct=True で重複なし)
 
 try:
     big = ddasp.compile_files(["big.lp"], node_max=50_000_000)

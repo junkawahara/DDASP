@@ -244,6 +244,20 @@ the imported, projected ZDD with kyotodd's `iter_min_weight` / `cost_bound_le`,
 so it needs every weighted atom to be a variable of the result; `compile(best=K)`
 collects the K best in C++ instead, hidden weights included.
 
+## Sampling (`--sample`)
+
+`--sample N` (Python `Result.sample(k, seed=, distinct=)`) draws answer sets
+uniformly at random from the result's ZDD with KyotoDD's `uniform_sample`
+(one count memo, independent draws with replacement) or, with `--distinct`,
+with `ZddRandomRange` (without replacement, in random order, at most the
+number of answer sets; the Python side uses `iter_random`). The draws are
+uniform over the projected family, i.e. every displayed set is equally
+likely; `--all-atoms` weights the sets by their hidden completions. The seed
+is `--seed S` (a random one by default; Python derives one 64-bit seed per
+draw from `random.Random(seed)`). Lines look like `--enumerate` lines (atoms
+top level first), the JSON key is `samples`, an inconsistent program yields
+nothing.
+
 ## Conversions and deep diagrams
 
 KyotoDD's `BDD::to_zdd` / `ZDD::to_bdd` work on levels, and the binary export
@@ -382,6 +396,8 @@ linear; any other order is still correct, only slower.
   vectors (not per-level marginals); projected sets counted once at their smallest cost
   (consistent with the bounds and `answer sets:`); bare `K[,K..] count` lines without
   zero counts; Python dict with tuple keys in ascending order, `None` unless requested.
+- 2026-10-22: `--sample N` / `Result.sample`: the user chose independent uniform draws (with
+  replacement) as the default and `--distinct` (`distinct=True`) for different sets; `--seed S`.
 - 2026-10-22: `--semantics stable|supported|classical` (Python `semantics=`): the user chose Clark's
   completion for `supported` (`a :- a.` supports a, so the tautologies are kept there); summary
   line `supported models:` / `classical models:`; the method applies to stable only.

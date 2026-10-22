@@ -57,6 +57,7 @@ G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp --gringo "$G" --cost-histogram examples/vertex_cover.lp  # 4 8 / 5 6 / 6 1
 ./build/ddasp --gringo "$G" --by-cost --limit 3 examples/vertex_cover.lp  # the 3 best: `4: in(2) ...`
 ./build/ddasp --gringo "$G" --brave --cautious --frequencies examples/queens.lp
+./build/ddasp --gringo "$G" --sample 5 --seed 1 examples/queens.lp       # 5 uniform random answer sets
 ./build/ddasp --gringo "$G" --json --enumerate --frequencies examples/choice.lp  # one JSON object
 ./build/ddasp --gringo "$G" --node-max 50000000 prog.lp           # fail instead of swapping
 ./build/ddasp --gringo "$G" -o out.zdd --atoms atoms.txt prog.lp
@@ -65,7 +66,9 @@ G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp --gringo "$G" --load coloring.ddasp --enumerate examples/coloring_fix.lp
 ```
 
-Options: `--enumerate [--limit N]` (streamed; `0` = all), `--by-cost` (the
+Options: `--enumerate [--limit N]` (streamed; `0` = all), `--sample N` (N answer
+sets drawn uniformly at random, independent draws; `--distinct` gives N
+different ones in random order; `--seed S` fixes the draw), `--by-cost` (the
 answer sets in ascending `#minimize` cost order as `K[,K...]: atoms` lines,
 best first; implies `--enumerate`, `--limit N` gives the N best), `--brave` /
 `--cautious` (the names displayed by some / every answer set, one line each,
@@ -122,6 +125,7 @@ res.count                     # 3
 list(res.answer_sets())       # frozensets of shown atom names
 res.zdd                       # kyotodd.ZDD (variables: level_to_atom / names)
 res.brave, res.cautious       # frozensets of names: shown by some / by every answer set
+res.sample(5, seed=1)         # 5 answer sets drawn uniformly at random (distinct=True: different ones)
 res.frequencies               # {name: number of answer sets showing it}
 res = ddasp.compile_files(["prog.lp"], optimize=True); res.optimum
 res = ddasp.compile_files(["prog.lp"], cost_slack=1)          # cost <= optimum + 1 (--cost-le +1);
