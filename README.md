@@ -14,7 +14,9 @@ instead), assumptions (aspif `6` statements, kept as
 constraints), `#project` (with `--project`, like clingo). Brave and cautious
 consequences and the number of answer sets displaying each name are read off
 the diagram (`--brave`, `--cautious`, `--frequencies`). `#heuristic`, edges
-and theory atoms are ignored with a warning.
+and theory atoms are ignored with a warning. `--semantics supported|classical`
+(Python `semantics=`) compiles the supported models (Clark's completion) or
+the classical models of the ground program instead of the answer sets.
 
 **New to ASP or DDASP?** Read the beginner's guide (Japanese):
 [docs/GUIDE_ja.md](docs/GUIDE_ja.md) — 初心者向け利用ガイド(ASP の基本文法から ZDD の活用まで)。
@@ -78,7 +80,8 @@ the bound, one entry per priority level in the order of `optimum:`, omitted
 levels free, like clingo's `--opt-mode=enum,K,...`; `+d` means the optimum
 plus d), `--cost-histogram` (`K[,K...] count` lines: the number of answer sets
 per cost vector, each projected set counted once at its smallest cost),
-`--external-values`, `--method scc|twocopy`, `--order name|id|FILE`,
+`--external-values`, `--semantics stable|supported|classical`, `--method
+scc|twocopy`, `--order name|id|FILE`,
 `-c NAME=VALUE` (define a constant for the grounder, like gringo's `-c`,
 overriding a `#const` in the program; repeatable), `--node-max N` (bound
 KyotoDD's node table; unlimited by default), `--stats`.
@@ -129,6 +132,7 @@ ddasp.compile_files(["prog.lp"], best=3).best                 # the 3 best as (c
 res = ddasp.compile_files(["prog.lp"], project="project")      # #project atoms (--project)
 res = ddasp.compile_files(["prog.lp"], external_values=True)   # --external-values
 res = ddasp.compile_files(["prog.lp"], node_max=50_000_000)    # ddasp.NodeLimitError if exceeded
+res = ddasp.compile_files(["prog.lp"], semantics="supported")  # Clark completion models ("classical": classical models)
 res.save("prog.ddasp")        # stored DD (ZDD + names), also ddasp --save / --load
 more = ddasp.compile_text(":- a. q :- b. #show q/0.", dds=[ddasp.load("prog.ddasp")])
 dd = ddasp.StoredDD.from_zdd(zdd, {1: "a", 2: "b"})   # a family built with kyotodd, as a stored DD

@@ -91,6 +91,27 @@ rejected: deciding whether any non-stable model remains in the BDD is itself the
 symbolic unfounded-set check, and checking models one by one amounts to
 enumeration.
 
+## Semantics other than stable (`--semantics`)
+
+`CompileOptions::semantics` (`--semantics`, Python `semantics=`) selects the
+family: `stable` (default) as above; `supported`, the models of Clark's
+completion, built as Models(X) ∧ Supported(X) without any unfounded-set
+quantification (no `u` variables, `groups: 0`); `classical`, Models(X) alone,
+the rules read as implications with choice rules imposing nothing.
+Supported(X) is the Clark support: a true atom needs a rule with it in the
+head whose body is true and whose other head atoms are false, and free atoms
+(#external without rules, loaded) need nothing; it is the constraint the SCC
+method already uses. The tautological rules are removed for the stable
+semantics only (`a :- a.` supports `a` under completion). Projection,
+`#minimize`, consequences and stored DDs work on the chosen family. Every
+semantics refers to the ground program as gringo emits it: its auxiliary
+atoms (aggregates, `not not`) are ordinary atoms there, so the supported and
+classical families can differ from a reading of the source program
+(`a :- #count{...} >= 1` becomes `aux :- 1 {...}` and `a :- aux`, and
+classically `aux` may be true without the count). The method option applies
+to the stable semantics only. `python/tests/test_semantics.py` checks both
+families against a brute-force oracle on random programs.
+
 ## Variable order and conjunction order
 
 - `--order name` (default): shown atoms sorted by name with numeric-aware
@@ -361,6 +382,9 @@ linear; any other order is still correct, only slower.
   vectors (not per-level marginals); projected sets counted once at their smallest cost
   (consistent with the bounds and `answer sets:`); bare `K[,K..] count` lines without
   zero counts; Python dict with tuple keys in ascending order, `None` unless requested.
+- 2026-10-22: `--semantics stable|supported|classical` (Python `semantics=`): the user chose Clark's
+  completion for `supported` (`a :- a.` supports a, so the tautologies are kept there); summary
+  line `supported models:` / `classical models:`; the method applies to stable only.
 - 2026-10-22: `--json` prints one JSON object with the keys of the Python `Result` (`count`,
   `optimum`, `brave`, `cautious`, `frequencies`, `cost_histogram`, `stats`, `answer_sets`), only
   the requested items, the answer sets streamed into an array (`{cost, atoms}` objects with

@@ -661,7 +661,8 @@ ddasp [options] FILE...
 | `--cost-eq K[,K..]` | コストがちょうど K の解だけを残す(書式は同じ。`--cost-le` / `--cost-ge` / `--opt` とは併用不可) |
 | `--cost-histogram` | コストの値(列)ごとの解の個数を `コスト 個数` の行で昇順に表示。射影時は表示集合を最小コストで 1 個と数える(合計は `answer sets: N`) |
 | `--external-values` | `#external` 原子を宣言の初期値(`#external a. [true]` など。無印の `#external a.` は false)に固定する。既定では初期値を無視して自由にする |
-| `--method scc\|twocopy` | 安定モデルの構成法(既定 `scc`、`twocopy` は参照実装) |
+| `--semantics stable\|supported\|classical` | 計算する族(既定 `stable` = 答集合。`supported` は Clark 完備化のモデル、`classical` はルールを含意として読んだ古典モデル)。要約行は `supported models:` / `classical models:` になる |
+| `--method scc\|twocopy` | 安定モデルの構成法(既定 `scc`、`twocopy` は参照実装。`stable` 以外では使われない) |
 | `--order name\|id\|FILE` | 変数順序(既定 `name`。FILE は上から順に並べる原子名(名前のない原子は `__atomN`)の一覧) |
 | `--gringo CMD` | グラウンダのコマンド(`CMD --output=intermediate [-c NAME=VALUE...] FILE...` として実行) |
 | `-c NAME=VALUE` | グラウンダに定数 NAME の値を渡す(gringo の `-c` と同じ。プログラム中の `#const NAME = ...` より優先。複数指定可。`.aspif` 入力では使えない) |
@@ -669,6 +670,24 @@ ddasp [options] FILE...
 | `--stats` | ノード数と所要時間を標準エラー出力に表示 |
 | `-q`, `--quiet` | `answer sets: N` と `optimum: ...` の行を表示しない |
 | `--json` | 結果を 1 つの JSON オブジェクトで出力する(`count`、`optimum` と、他のオプションで求めた `brave` / `cautious` / `frequencies` / `cost_histogram` / `stats` / `answer_sets`。`--by-cost` では各解が `{"cost": [..], "atoms": [..]}`。`-q` と `--count` は無視) |
+
+### 安定モデル以外の族を作る(`--semantics`)
+
+`--semantics supported` は Clark 完備化のモデル(supported model: 真の各原子に、それを頭部に含み、
+本体が真で、他の頭部原子が偽のルールがある。`#external` の自由な原子は常に支持されている)、
+`--semantics classical` はルールを含意 `本体 → 頭部` として読んだ古典モデル(選択ルールは何も課さない)
+の族を作ります。要約行は `supported models:` / `classical models:` になり、列挙・射影・`#minimize`・
+帰結・保存 DD はその族に対して働きます。
+
+```sh
+./build/ddasp --gringo "$G" examples/loop.lp                        # answer sets: 2
+./build/ddasp --gringo "$G" --semantics supported examples/loop.lp   # supported models: 3  ({a, b} は自己支持)
+./build/ddasp --gringo "$G" --semantics classical examples/loop.lp   # classical models: 3
+```
+
+注意: どの意味論も gringo が出力したグラウンドプログラムに対するものです。集約や `not not` の
+書き換えで gringo が導入する補助原子も普通の原子として扱われるので、supported / classical の
+個数は元のプログラムを手で解釈したものと違うことがあります。
 
 ### 解全体の性質を調べる(`--brave` / `--cautious` / `--frequencies`)
 
@@ -854,6 +873,7 @@ ddasp.compile_files(["examples/vertex_cover.lp"], best=3).best   # 上位 3 解�
 |---|---|
 | `clingo_args=["--const", "n=8"]` | clingo に渡す引数(定数の上書きなど) |
 | `method="scc"` | `"scc"`(既定)または `"twocopy"` |
+| `semantics="stable"` | `"supported"`(Clark 完備化のモデル)または `"classical"`(古典モデル)で `--semantics` 相当 |
 | `order="name"` | `"name"`、`"id"`、または上に置く原子番号のリスト |
 | `project=True` | `False` にすると `--all-atoms` 相当、`"project"` にすると `--project` 相当(`#project` の原子へ射影) |
 | `optimize=False` | `True` で `--opt` 相当 |
