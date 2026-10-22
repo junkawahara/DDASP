@@ -23,6 +23,7 @@ add_library(ddasp_lib STATIC
   src/dd_util.cpp
   src/compiler.cpp
   src/stored_dd.cpp
+  src/consequences.cpp
 )
 target_include_directories(ddasp_lib PUBLIC include)
 target_link_libraries(ddasp_lib PUBLIC kyotodd_lib)
@@ -60,7 +61,7 @@ if(DDASP_BUILD_TESTS)
 
   enable_testing()
 
-  foreach(name program aspif_reader compiler stored_dd)
+  foreach(name program aspif_reader compiler stored_dd consequences)
     add_executable(${name}_test test/test_${name}.cpp)
     target_link_libraries(${name}_test ddasp_lib GTest::gtest_main)
     ddasp_warnings(${name}_test)

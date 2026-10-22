@@ -7,6 +7,7 @@
  */
 
 #include <functional>
+#include <map>
 #include <vector>
 
 #include "bdd.h"
@@ -66,6 +67,16 @@ kyotodd::ZDD rename_zdd(const kyotodd::ZDD& f, const std::vector<kyotodd::bddvar
  * returns false to stop the enumeration early. Iterative (no recursion).
  */
 void for_each_set(const kyotodd::ZDD& f, const std::function<bool(const std::vector<kyotodd::bddvar>&)>& visit);
+
+/**
+ * @brief Number of sets of a ZDD containing each variable.
+ *
+ * One pass over the diagram (iterative): for every node, the number of sets
+ * below it and the number of paths from the root to it; the count of a
+ * variable is the sum over its nodes of paths × sets below the 1-child.
+ * Variables that occur in no set are absent from the result.
+ */
+std::map<kyotodd::bddvar, bigint::BigInt> zdd_variable_counts(const kyotodd::ZDD& f);
 
 /**
  * @brief Threshold constraint: sum(weights[i] * [terms[i]]) >= bound.

@@ -297,6 +297,58 @@ void for_each_set(const ZDD& f, const std::function<bool(const std::vector<bddva
     }
 }
 
+std::map<bddvar, bigint::BigInt> zdd_variable_counts(const ZDD& f) {
+    typedef bigint::BigInt BigInt;
+    std::map<bddvar, BigInt> counts;
+    if (f.is_terminal()) return counts;
+    // Reachable nodes (a node id includes the complement flag, so it identifies
+    // the family) ordered top-down by level.
+    std::vector<ZDD> nodes;
+    std::map<kyotodd::bddp, size_t> index;
+    std::vector<ZDD> todo(1, f);
+    while (!todo.empty()) {
+        ZDD n = todo.back();
+        todo.pop_back();
+        if (n.is_terminal() || !index.insert(std::make_pair(n.id(), nodes.size())).second) continue;
+        nodes.push_back(n);
+        todo.push_back(n.child0());
+        todo.push_back(n.child1());
+    }
+    std::vector<size_t> order(nodes.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    struct LevelDesc {
+        const std::vector<ZDD>* nodes;
+        bool operator()(size_t a, size_t b) const {
+            return kyotodd::bddlevofvar((*nodes)[a].top()) > kyotodd::bddlevofvar((*nodes)[b].top());
+        }
+    } desc = {&nodes};
+    std::stable_sort(order.begin(), order.end(), desc);
+
+    std::vector<BigInt> below(nodes.size()), paths(nodes.size());
+    struct Below {
+        const std::vector<BigInt>* below;
+        const std::map<kyotodd::bddp, size_t>* index;
+        BigInt operator()(const ZDD& c) const {
+            if (c.is_terminal()) return BigInt(c.is_one() ? 1 : 0);
+            return (*below)[index->find(c.id())->second];
+        }
+    } below_of = {&below, &index};
+    for (size_t k = order.size(); k-- > 0;) {  // children before parents
+        size_t i = order[k];
+        below[i] = below_of(nodes[i].child0()) + below_of(nodes[i].child1());
+    }
+    paths[index[f.id()]] = BigInt(1);
+    for (size_t k = 0; k < order.size(); ++k) {  // parents before children
+        size_t i = order[k];
+        ZDD c0 = nodes[i].child0(), c1 = nodes[i].child1();
+        if (!c0.is_terminal()) paths[index[c0.id()]] += paths[i];
+        if (!c1.is_terminal()) paths[index[c1.id()]] += paths[i];
+        BigInt through = paths[i] * below_of(c1);
+        if (!through.is_zero()) counts[nodes[i].top()] += through;
+    }
+    return counts;
+}
+
 namespace {
 
 struct ThresholdFrame {

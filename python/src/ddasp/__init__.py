@@ -199,6 +199,31 @@ class Result:
     def stats(self) -> dict:
         return dict(self._core.stats)
 
+    # --- consequences ------------------------------------------------------
+    @property
+    def frequencies(self) -> dict:
+        """Name -> number of answer sets displaying it (insertion order = display order).
+
+        The names are those of :meth:`answer_sets`: fact names, the names of the
+        atoms of the result, then the #show terms; a name shown through several
+        outputs counts the answer sets displaying it through any of them. With
+        projection the count refers to the projected answer sets.
+        """
+        return {name: int(count) for name, count in self._core.frequencies}
+
+    @property
+    def brave(self) -> frozenset:
+        """Brave consequences: the names displayed by at least one answer set."""
+        return frozenset(name for name, count in self._core.frequencies if int(count) > 0)
+
+    @property
+    def cautious(self) -> frozenset:
+        """Cautious consequences: the names displayed by every answer set (empty if there is none)."""
+        total = self.count
+        if total == 0:
+            return frozenset()
+        return frozenset(name for name, count in self._core.frequencies if int(count) == total)
+
     def atom_name(self, atom: int) -> str:
         return self._names.get(atom, f"__atom{atom}")
 

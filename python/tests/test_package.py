@@ -220,3 +220,18 @@ def test_project_statements():
         ddasp.compile_text(PROJECT_PROGRAM, project="shown")
     with pytest.raises(ValueError):
         ddasp.compile_text(PROJECT_PROGRAM, project="project", method="nope")
+
+
+@pytest.mark.parametrize("name", sorted(INLINE_PROGRAMS))
+def test_consequences(tmp_path, name):
+    from test_against_clingo import consequences_from
+
+    path = _write(tmp_path, name)
+    brave, cautious, _ = consequences_from(clingo_answer_sets([path], project=True))
+    res = ddasp.compile_text(INLINE_PROGRAMS[name])
+    assert res.brave == brave
+    assert res.cautious == cautious
+    _, _, freq = consequences_from(clingo_answer_sets([path]))
+    full = ddasp.compile_text(INLINE_PROGRAMS[name], project=False)
+    assert {k: v for k, v in full.frequencies.items() if v} == dict(freq)
+    assert list(res.frequencies) == list(res.frequencies)  # display order is stable

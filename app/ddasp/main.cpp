@@ -24,6 +24,7 @@
 #include "bdd.h"
 #include "ddasp/aspif_reader.h"
 #include "ddasp/compiler.h"
+#include "ddasp/consequences.h"
 #include "ddasp/dd_util.h"
 #include "ddasp/stored_dd.h"
 
@@ -40,6 +41,9 @@ struct Options {
     std::vector<std::string> load_files;  // --load
     bool count = false;
     bool enumerate = false;
+    bool brave = false;
+    bool cautious = false;
+    bool frequencies = false;
     bool stats = false;
     bool quiet = false;
     bool export_bdd = false;
@@ -68,6 +72,12 @@ void usage(std::ostream& os) {
           "  --enumerate        print every answer set (one per line, shown atoms in\n"
           "                     variable-order, i.e. name order)\n"
           "  --limit N          print at most N answer sets with --enumerate (0 = all)\n"
+          "  --brave            print the brave consequences (the names displayed by\n"
+          "                     some answer set) on one line, like an answer set\n"
+          "  --cautious         print the cautious consequences (the names displayed\n"
+          "                     by every answer set; nothing if there is none)\n"
+          "  --frequencies      print `name count` per displayed name: the number of\n"
+          "                     answer sets displaying it (after projection)\n"
           "  -o FILE            write the ZDD to FILE (KyotoDD binary format)\n"
           "  --bdd              write a BDD instead of a ZDD with -o\n"
           "  --atoms FILE       write the variable/level/atom/name table to FILE, followed\n"
@@ -115,6 +125,12 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.count = true;
         } else if (a == "--enumerate") {
             opt.enumerate = true;
+        } else if (a == "--brave") {
+            opt.brave = true;
+        } else if (a == "--cautious") {
+            opt.cautious = true;
+        } else if (a == "--frequencies") {
+            opt.frequencies = true;
         } else if (a == "--limit") {
             std::string v = need_value("--limit");
             char* end = 0;
@@ -409,6 +425,23 @@ int main(int argc, char** argv) {
             std::cout << "optimum:";
             for (size_t i = 0; i < res.optimum.size(); ++i) std::cout << ' ' << res.optimum[i];
             std::cout << "\n";
+        }
+
+        if (opt.brave || opt.cautious || opt.frequencies) {
+            std::vector<NameCount> freq = name_frequencies(res);
+            if (opt.brave) {
+                std::vector<std::string> names = brave_consequences(freq);
+                for (size_t i = 0; i < names.size(); ++i) std::cout << (i ? " " : "") << names[i];
+                std::cout << "\n";
+            }
+            if (opt.cautious) {
+                std::vector<std::string> names = cautious_consequences(freq, count);
+                for (size_t i = 0; i < names.size(); ++i) std::cout << (i ? " " : "") << names[i];
+                std::cout << "\n";
+            }
+            if (opt.frequencies) {
+                for (size_t i = 0; i < freq.size(); ++i) std::cout << freq[i].name << ' ' << freq[i].count.to_string() << "\n";
+            }
         }
 
         if (opt.enumerate) {

@@ -261,3 +261,38 @@ def test_project_statements(ddasp_bin, tmp_path):
     proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--project", "--all-atoms", str(path)],
                           capture_output=True, text=True)
     assert proc.returncode == 2 and "cannot be combined" in proc.stderr
+
+
+def consequences_from(answer_sets):
+    """(brave, cautious, frequencies) of a multiset of answer sets."""
+    sets = list(answer_sets.elements())
+    brave = frozenset().union(*sets) if sets else frozenset()
+    cautious = frozenset.intersection(*sets) if sets else frozenset()
+    freq = Counter()
+    for s in sets:
+        freq.update(s)
+    return brave, cautious, freq
+
+
+@pytest.mark.parametrize("name", sorted(INLINE_PROGRAMS))
+def test_consequences_match_clingo(ddasp_bin, tmp_path, name):
+    path = tmp_path / f"{name}.lp"
+    path.write_text(INLINE_PROGRAMS[name])
+    brave, cautious, _ = consequences_from(clingo_answer_sets([path], project=True))
+    out, _ = run_ddasp(ddasp_bin, [path], "--brave", "--cautious", "-q")
+    lines = out.split("\n")
+    assert frozenset(lines[0].split()) == brave
+    assert frozenset(lines[1].split()) == cautious
+    # Frequencies over all answer sets (no projection) are the multiset counts.
+    _, _, freq = consequences_from(clingo_answer_sets([path]))
+    out, _ = run_ddasp(ddasp_bin, [path], "--frequencies", "--all-atoms", "-q")
+    got = {line.split()[0]: int(line.split()[1]) for line in out.splitlines()}
+    assert {k: v for k, v in got.items() if v} == dict(freq)
+    assert all(not k.startswith("__atom") for k in got)
+
+
+def test_consequences_output_format(ddasp_bin, tmp_path):
+    path = tmp_path / "c.lp"
+    path.write_text("f. { a; b }. c :- a. :- not a, not b. #show f/0. #show a/0. #show b/0. #show c/0.")
+    out, _ = run_ddasp(ddasp_bin, [path], "--brave", "--cautious", "--frequencies")
+    assert out.splitlines() == ["answer sets: 3", "f a b c", "f", "f 3", "a 2", "b 2", "c 2"]

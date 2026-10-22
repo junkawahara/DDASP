@@ -18,6 +18,7 @@
 #include "bdd.h"
 #include "ddasp/aspif_reader.h"
 #include "ddasp/compiler.h"
+#include "ddasp/consequences.h"
 #include "ddasp/program.h"
 #include "ddasp/stored_dd.h"
 
@@ -77,6 +78,7 @@ struct PlainResult {
     std::string stored_error;                 // why it cannot be stored (when !stored_ok)
     std::vector<std::string> stored_warnings;
     std::vector<std::string> warnings;
+    std::vector<std::pair<std::string, std::string> > frequencies;  // (name, decimal count) in display order
 };
 
 PlainResult compile_plain(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored) {
@@ -130,6 +132,10 @@ PlainResult compile_plain(const Program& program, const CompileOptions& opts, co
     }
     out.optimum = res.optimum;
     out.count = res.zdd.exact_count().to_string();
+    std::vector<NameCount> freq = name_frequencies(res);
+    for (size_t i = 0; i < freq.size(); ++i) {
+        out.frequencies.push_back(std::make_pair(freq[i].name, freq[i].count.to_string()));
+    }
     out.stats = res.stats;
     out.zdd_nodes = res.zdd.raw_size();
     out.bdd_nodes = res.bdd.raw_size();
@@ -156,6 +162,7 @@ struct Result {
     std::vector<py::dict> costs;
     std::vector<long long> optimum;
     std::string count;
+    std::vector<std::pair<std::string, std::string> > frequencies;
     py::dict stats;
     py::object stored_bytes;  // bytes, or None when the result cannot be stored
     std::string stored_error;
@@ -225,6 +232,7 @@ Result compile_py(const Program& program, const std::string& method, const std::
     }
     out.optimum = plain.optimum;
     out.count = plain.count;
+    out.frequencies = plain.frequencies;
     const CompileStats& st = plain.stats;
     out.stats["order_time"] = st.order_time;
     out.stats["models_time"] = st.models_time;
@@ -318,6 +326,7 @@ PYBIND11_MODULE(_core, m) {
         .def_readonly("costs", &Result::costs)
         .def_readonly("optimum", &Result::optimum)
         .def_readonly("count", &Result::count)
+        .def_readonly("frequencies", &Result::frequencies)
         .def_readonly("stats", &Result::stats)
         .def_readonly("stored_bytes", &Result::stored_bytes)
         .def_readonly("stored_error", &Result::stored_error)
