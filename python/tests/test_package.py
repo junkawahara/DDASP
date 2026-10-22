@@ -1,5 +1,7 @@
 """Tests of the ddasp Python package (clingo observer -> C++ core -> kyotodd)."""
 
+from collections import Counter
+
 import pytest
 
 ddasp = pytest.importorskip("ddasp")
@@ -7,7 +9,7 @@ kyotodd = pytest.importorskip("kyotodd")
 
 from conftest import clingo_answer_sets, clingo_costed_answer_sets, clingo_optimum  # noqa: E402
 from test_against_clingo import (INLINE_PROGRAMS, OPT_PROGRAMS, STANDALONE_EXAMPLES,  # noqa: E402
-                                 cost_bound_cases, expected_histogram, lex_within)
+                                 cost_bound_cases, expected_by_cost, expected_histogram, lex_within)
 
 
 def _write(tmp_path, name, programs=INLINE_PROGRAMS):
@@ -99,6 +101,38 @@ def test_cost_histogram(tmp_path, name):
     assert "histogram_time" in res.stats
     with pytest.raises(ValueError):
         ddasp.compile_text("{ a }.", cost_histogram=True)  # no #minimize statement
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_answer_sets_by_cost(tmp_path, name):
+    path = _write(tmp_path, name, OPT_PROGRAMS)
+    text = OPT_PROGRAMS[name]
+    models = clingo_costed_answer_sets([path])
+    full = ddasp.compile_text(text, project=False)
+    rows = list(full.answer_sets(by_cost=True))
+    assert [cost for cost, _ in rows] == sorted(cost for cost, _ in rows)
+    assert Counter(rows) == expected_by_cost(models, project=False)
+    res = ddasp.compile_text(text)
+    if {level for cost in res.costs for level in cost["weights"]} - set(res.levels):
+        with pytest.raises(ValueError):  # hidden atoms carry weight: only compile(best=K) orders the projected sets
+            list(res.answer_sets(by_cost=True))
+    else:
+        rows = list(res.answer_sets(by_cost=True))
+        assert [cost for cost, _ in rows] == sorted(cost for cost, _ in rows)
+        assert Counter(rows) == expected_by_cost(models, project=True)
+    expected = expected_by_cost(models, project=True)
+    best = ddasp.compile_text(text, best=3).best
+    assert len(best) == min(3, sum(expected.values())) == len(set(best))
+    assert [cost for cost, _ in best] == sorted(cost for cost, _ in expected.elements())[:3]
+    assert all(expected[row] for row in best)
+    assert ddasp.compile_text(text).best is None
+    for bad in (0, -1, True, "3"):
+        with pytest.raises(ValueError):
+            ddasp.compile_text(text, best=bad)
+    with pytest.raises(ValueError):
+        ddasp.compile_text("{ a }.", best=1)  # no #minimize statement
+    with pytest.raises(ValueError):
+        list(ddasp.compile_text("{ a }.").answer_sets(by_cost=True))
 
 
 def test_cost_bound_arguments():

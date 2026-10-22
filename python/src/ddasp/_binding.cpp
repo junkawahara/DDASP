@@ -94,6 +94,7 @@ struct PlainResult {
     std::vector<std::string> warnings;
     std::vector<std::pair<std::string, std::string> > frequencies;  // (name, decimal count) in display order
     std::vector<std::pair<std::vector<long long>, std::string> > cost_histogram;  // (cost vector, decimal count), ascending
+    std::vector<std::pair<std::vector<long long>, std::vector<std::string> > > best;  // (cost vector, shown names), best first
 };
 
 PlainResult compile_plain(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored,
@@ -168,6 +169,9 @@ PlainResult compile_plain_in(const Program& program, const CompileOptions& opts,
     for (size_t i = 0; i < res.cost_histogram.size(); ++i) {
         out.cost_histogram.push_back(std::make_pair(res.cost_histogram[i].cost, res.cost_histogram[i].count.to_string()));
     }
+    for (size_t i = 0; i < res.best.size(); ++i) {
+        out.best.push_back(std::make_pair(res.best[i].cost, res.shown_names(res.best[i].atoms)));
+    }
     out.stats = res.stats;
     out.zdd_nodes = res.zdd.raw_size();
     out.bdd_nodes = res.bdd.raw_size();
@@ -196,6 +200,7 @@ struct Result {
     std::string count;
     std::vector<std::pair<std::string, std::string> > frequencies;
     std::vector<std::pair<std::vector<long long>, std::string> > cost_histogram;
+    std::vector<std::pair<std::vector<long long>, std::vector<std::string> > > best;
     py::dict stats;
     py::object stored_bytes;  // bytes, or None when the result cannot be stored
     std::string stored_error;
@@ -224,7 +229,7 @@ Result compile_py(const Program& program, const std::string& method, const std::
                   bool external_values, const std::vector<py::bytes>& loaded, uint64_t node_max,
                   const std::vector<long long>& cost_le, const std::vector<long long>& cost_ge,
                   const std::vector<long long>& cost_eq, const std::vector<long long>& cost_slack,
-                  bool cost_histogram) {
+                  bool cost_histogram, uint64_t best) {
     CompileOptions opts;
     opts.method = parse_method(method);
     opts.order_heuristic = parse_order_heuristic(order_heuristic);
@@ -238,6 +243,7 @@ Result compile_py(const Program& program, const std::string& method, const std::
     opts.cost_ge = cost_bounds(cost_ge, false);
     opts.cost_eq = cost_bounds(cost_eq, false);
     opts.cost_histogram = cost_histogram;
+    opts.best = static_cast<size_t>(best);
     std::vector<StoredDDData> stored;
     for (size_t i = 0; i < loaded.size(); ++i) stored.push_back(parse_stored(std::string(loaded[i])));
 
@@ -282,6 +288,7 @@ Result compile_py(const Program& program, const std::string& method, const std::
     out.count = plain.count;
     out.frequencies = plain.frequencies;
     out.cost_histogram = plain.cost_histogram;
+    out.best = plain.best;
     const CompileStats& st = plain.stats;
     out.stats["order_time"] = st.order_time;
     out.stats["models_time"] = st.models_time;
@@ -378,6 +385,7 @@ PYBIND11_MODULE(_core, m) {
         .def_readonly("count", &Result::count)
         .def_readonly("frequencies", &Result::frequencies)
         .def_readonly("cost_histogram", &Result::cost_histogram)
+        .def_readonly("best", &Result::best)
         .def_readonly("stats", &Result::stats)
         .def_readonly("stored_bytes", &Result::stored_bytes)
         .def_readonly("stored_error", &Result::stored_error)
@@ -390,11 +398,13 @@ PYBIND11_MODULE(_core, m) {
           py::arg("node_max") = static_cast<uint64_t>(0), py::arg("cost_le") = std::vector<long long>(),
           py::arg("cost_ge") = std::vector<long long>(), py::arg("cost_eq") = std::vector<long long>(),
           py::arg("cost_slack") = std::vector<long long>(), py::arg("cost_histogram") = false,
+          py::arg("best") = static_cast<uint64_t>(0),
           "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images, "
           "`node_max` limits KyotoDD's node table (0 = unlimited; NodeLimitError when reached); `cost_le`, "
           "`cost_ge` and `cost_eq` bound the #minimize cost vector lexicographically (one entry per priority "
           "level, most important first) and `cost_slack` is an upper bound relative to the optimum, which is "
-          "then reported; `cost_histogram` fills the (cost vector, count) list of the result.");
+          "then reported; `cost_histogram` fills the (cost vector, count) list of the result and `best` the list of "
+          "its first `best` (cost vector, shown names) in ascending cost order.");
     py::register_exception<NodeLimitError>(m, "NodeLimitError", PyExc_RuntimeError);
 
     m.def("stored_dd_parts",

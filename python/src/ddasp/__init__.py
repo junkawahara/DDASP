@@ -122,11 +122,12 @@ class Result:
     diagrams the atom of a variable ``v`` is ``level_to_atom[kyotodd.to_level(v)]``.
     """
 
-    def __init__(self, core: CoreResult, cost_histogram: Optional[dict] = None):
+    def __init__(self, core: CoreResult, cost_histogram: Optional[dict] = None, best: Optional[list] = None):
         self._core = core
         self._zdd = None
         self._bdd = None
         self._cost_histogram = cost_histogram
+        self._best = best
         # The core maps are std::map objects that pybind11 converts to a new dict
         # on every access; convert them once.
         self._names = dict(core.names)
@@ -210,6 +211,18 @@ class Result:
         return None if self._cost_histogram is None else dict(self._cost_histogram)
 
     @property
+    def best(self) -> Optional[list]:
+        """The ``best=K`` answer sets of the compilation in ascending ``#minimize`` cost order.
+
+        A list of ``(cost, answer_set)`` pairs: the cost vector as a tuple (one cost
+        per priority level, most important first) and the shown names as a
+        frozenset, like :meth:`answer_sets`. Each projected answer set appears once,
+        at the smallest cost of the answer sets projecting to it (hidden weighted
+        atoms are fine here). ``None`` unless ``compile`` was given ``best``.
+        """
+        return None if self._best is None else list(self._best)
+
+    @property
     def count(self) -> int:
         """Number of answer sets (exact)."""
         return int(self._core.count)
@@ -281,27 +294,84 @@ class Result:
         self.zdd  # make sure the variables exist in the kyotodd instance
         return [kyotodd.to_var(lev) for lev in self._core.levels]
 
-    def answer_sets(self) -> Iterator[frozenset]:
+    def answer_sets(self, by_cost: bool = False) -> Iterator:
         """Iterate over the answer sets as frozensets of shown names (via kyotodd).
 
         Each set holds the fact names, the names of its atoms and the terms
         whose conditions hold, like clingo's output. Unnamed (hidden) atoms are
         left out, so without projection the same frozenset can be yielded
         several times.
+
+        With ``by_cost`` the answer sets come in ascending ``#minimize`` cost order
+        as ``(cost, answer_set)`` pairs, the cost a tuple with one entry per
+        priority level (most important first; the order among equal costs is
+        unspecified). A single level is enumerated with kyotodd's k-best
+        iterator, several levels cost value by cost value. Every weighted atom
+        must be a variable of the result, i.e. shown or ``project=False``;
+        otherwise ``ValueError`` is raised (``compile(best=K)`` orders the
+        projected sets in that case), as it is without a ``#minimize`` statement.
         """
+        if by_cost:
+            yield from self._answer_sets_by_cost()
+            return
+        decode = self._set_decoder()
+        for s in self.zdd.enumerate():
+            yield decode(s)
+
+    def _set_decoder(self):
+        """A function turning an enumerated kyotodd set into the frozenset of its shown names."""
         import kyotodd
 
         facts = frozenset(self._core.fact_names)
         names = self._names
         terms = self._core.terms
         level_to_atom = self._level_to_atom
-        for s in self.zdd.enumerate():
+
+        def decode(s):
             atoms = frozenset(level_to_atom[kyotodd.to_level(v)] for v in s)
             shown = set(names[a] for a in atoms if a in names)
             for name, cond in terms:
                 if all((abs(l) in atoms) == (l > 0) for l in cond):
                     shown.add(name)
-            yield facts | frozenset(shown)
+            return facts | frozenset(shown)
+
+        return decode
+
+    def _answer_sets_by_cost(self):
+        import kyotodd
+
+        costs = self._core.costs
+        if not costs:
+            raise ValueError("answer_sets(by_cost=True) needs a #minimize statement, but the program has none")
+        zdd = self.zdd  # importing it may create kyotodd variables: size the weights afterwards
+        hidden = sorted({level for cost in costs for level in cost["weights"]} - set(self.levels))
+        if hidden:
+            raise ValueError("answer_sets(by_cost=True): hidden atoms carry #minimize weight (levels "
+                             f"{hidden}); compile with project=False or use compile(best=K)")
+        size = kyotodd.var_count() + 1  # weights are indexed by kyotodd variable number
+        weights = []
+        for cost in costs:
+            w = [0] * size
+            for level, value in cost["weights"].items():
+                w[kyotodd.to_var(level)] = value
+            weights.append(w)
+        offsets = [cost["offset"] for cost in costs]
+        decode = self._set_decoder()
+        if len(costs) == 1:  # k-best iterator (Yen's algorithm)
+            for weight, s in zdd.iter_min_weight(weights[0]):
+                yield (weight + offsets[0],), decode(s)
+            return
+        rest = zdd  # several levels: peel the lexicographic optimum of the rest, level by level
+        while not rest.is_zero:  # a property in kyotodd's Python binding
+            best = rest
+            cost = []
+            for w, offset in zip(weights, offsets):
+                m = best.min_weight(w)
+                best = best.cost_bound_le(w, m)
+                cost.append(m + offset)
+            for s in best.enumerate():
+                yield tuple(cost), decode(s)
+            rest = rest - best
 
     # --- stored DDs -------------------------------------------------------
     def stored(self) -> "StoredDD":
@@ -495,6 +565,7 @@ def compile(
     cost_eq: Union[int, Sequence[int], None] = None,
     cost_slack: Union[int, Sequence[int], None] = None,
     cost_histogram: bool = False,
+    best: Optional[int] = None,
 ) -> Result:
     """Compile a :class:`Program`.
 
@@ -544,6 +615,11 @@ def compile(
                            (:attr:`Result.cost_histogram`; needs a ``#minimize``
                            statement). The histogram describes the result, i.e. the
                            answer sets left after ``optimize`` or the cost bounds.
+    :param best: also collect the ``best`` answer sets of the result with the smallest
+                 ``#minimize`` costs (:attr:`Result.best`, ``(cost, answer_set)`` pairs in
+                 ascending cost order; needs a ``#minimize`` statement). Unlike
+                 ``answer_sets(by_cost=True)`` this also works when hidden atoms carry
+                 weight: each projected set is listed once, at its smallest cost.
     """
     if isinstance(order, str):
         heuristic, order_atoms = order, []
@@ -566,11 +642,14 @@ def compile(
         raise ValueError("cost_le and cost_slack cannot be combined (both are upper bounds)")
     if eq and (le or ge or slack):
         raise ValueError("cost_eq cannot be combined with cost_le, cost_ge or cost_slack")
+    if best is not None and (isinstance(best, bool) or not isinstance(best, int) or best <= 0):
+        raise ValueError(f"best: expected a positive integer or None, got {best!r}")
     core = _core_compile(program, method, heuristic, order_atoms, project, use_project, optimize, external_values,
                          loaded, node_max or 0, cost_le=le, cost_ge=ge, cost_eq=eq, cost_slack=slack,
-                         cost_histogram=cost_histogram)
+                         cost_histogram=cost_histogram, best=best or 0)
     histogram = {tuple(cost): int(count) for cost, count in core.cost_histogram} if cost_histogram else None
-    return Result(core, histogram)
+    best_sets = [(tuple(cost), frozenset(names)) for cost, names in core.best] if best else None
+    return Result(core, histogram, best_sets)
 
 
 _used_controls = weakref.WeakSet()  # controls compile_control has grounded
