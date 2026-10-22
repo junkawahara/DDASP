@@ -46,6 +46,7 @@ struct Options {
     bool brave = false;
     bool cautious = false;
     bool frequencies = false;
+    bool cost_histogram = false;
     bool stats = false;
     bool quiet = false;
     bool export_bdd = false;
@@ -107,7 +108,10 @@ void usage(std::ostream& os) {
           "  --cost-ge K[,K..]  ... at least K (same syntax; combines with --cost-le)\n"
           "  --cost-eq K[,K..]  ... exactly K (same syntax; not with --cost-le/--cost-ge).\n"
           "                     None of the three combines with --opt\n"
-          "  --external-values  fix every free #external atom to its declared initial\n"
+          "  --cost-histogram   print `K[,K..] count` per #minimize cost vector, ascending:\n"
+          "                     the number of answer sets with that cost (after projection\n"
+          "                     each set counts once, at the smallest cost of the answer\n"
+          "                     sets it stands for); costs of no answer set are omitted\n"          "  --external-values  fix every free #external atom to its declared initial\n"
           "                     value (`#external a. [true]`; gringo declares a plain\n"
           "                     `#external a.` as false); ignored by default\n"
           "  --method M         stable-model method: scc (default) or twocopy\n"
@@ -178,6 +182,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.cautious = true;
         } else if (a == "--frequencies") {
             opt.frequencies = true;
+        } else if (a == "--cost-histogram") {
+            opt.cost_histogram = true;
         } else if (a == "--limit") {
             std::string v = need_value("--limit");
             char* end = 0;
@@ -454,6 +460,7 @@ int main(int argc, char** argv) {
         copts.cost_le = opt.cost_le;
         copts.cost_ge = opt.cost_ge;
         copts.cost_eq = opt.cost_eq;
+        copts.cost_histogram = opt.cost_histogram;
         copts.external_values = opt.external_values;
         copts.method = parse_method(opt.method);
         if (opt.order == "name" || opt.order == "id") {
@@ -490,6 +497,7 @@ int main(int argc, char** argv) {
                       << "unfounded time: " << st.unfounded_time << " s\n"
                       << "convert time: " << st.convert_time << " s\n"
                       << "optimize time: " << st.optimize_time << " s\n"
+                      << "histogram time: " << st.histogram_time << " s\n"
                       << "project time: " << st.project_time << " s\n"
                       << "compile time: " << t_compile << " s\n";
         }
@@ -517,6 +525,14 @@ int main(int argc, char** argv) {
             }
             if (opt.frequencies) {
                 for (size_t i = 0; i < freq.size(); ++i) std::cout << freq[i].name << ' ' << freq[i].count.to_string() << "\n";
+            }
+        }
+
+        if (opt.cost_histogram) {
+            for (size_t i = 0; i < res.cost_histogram.size(); ++i) {
+                const CostCount& entry = res.cost_histogram[i];
+                for (size_t c = 0; c < entry.cost.size(); ++c) std::cout << (c ? "," : "") << entry.cost[c];
+                std::cout << ' ' << entry.count.to_string() << "\n";
             }
         }
 

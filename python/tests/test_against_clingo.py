@@ -200,6 +200,55 @@ def test_relative_cost_bounds(ddasp_bin, tmp_path, name):
         assert ddasp_answer_sets(ddasp_bin, [path], "--cost-le", f"{optimum[0] + 1},+0", "--all-atoms") == expected
 
 
+def expected_histogram(models, project, keep=lambda cost: True):
+    """``--cost-histogram`` lines as (cost vector, count) pairs, from clingo's costed answer sets.
+
+    With ``project`` every shown set counts once, at the smallest cost vector of the
+    answer sets kept for it; ``keep`` restricts the answer sets first (a cost bound).
+    """
+    kept = [(shown, cost) for shown, cost in models if keep(cost)]
+    if project:
+        smallest = {}
+        for shown, cost in kept:
+            if shown not in smallest or cost < smallest[shown]:
+                smallest[shown] = cost
+        costs = list(smallest.values())
+    else:
+        costs = [cost for _, cost in kept]
+    return sorted(Counter(costs).items())
+
+
+def parse_histogram(out):
+    pairs = [line.split() for line in out.splitlines()]
+    return [(tuple(int(k) for k in cost.split(",")), int(count)) for cost, count in pairs]
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_cost_histogram_matches_clingo(ddasp_bin, tmp_path, name):
+    path = tmp_path / f"{name}.lp"
+    path.write_text(OPT_PROGRAMS[name])
+    models = clingo_costed_answer_sets([path])
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--cost-histogram", "--all-atoms")
+    assert parse_histogram(out) == expected_histogram(models, project=False)
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--cost-histogram")
+    hist = parse_histogram(out)
+    assert hist == expected_histogram(models, project=True)
+    # The counts add up to the number of answer sets, and cumulatively to the count of --cost-le.
+    count_out, _ = run_ddasp(ddasp_bin, [path], "-q", "--count")
+    assert sum(n for _, n in hist) == int(count_out)
+    seen = 0
+    for cost, n in hist:
+        seen += n
+        upto, _ = run_ddasp(ddasp_bin, [path], "-q", "--count", "--cost-le", ",".join(map(str, cost)))
+        assert int(upto) == seen
+    if hist:  # the histogram describes the result: one line with --opt, the sets within a bound otherwise
+        out, _ = run_ddasp(ddasp_bin, [path], "-q", "--opt", "--cost-histogram")
+        assert parse_histogram(out) == [(tuple(clingo_optimum([path])), hist[0][1])]
+        mid = hist[len(hist) // 2][0]
+        out, _ = run_ddasp(ddasp_bin, [path], "-q", "--cost-histogram", "--cost-ge", ",".join(map(str, mid)))
+        assert parse_histogram(out) == expected_histogram(models, True, lambda c: lex_within(c, mid, "ge"))
+
+
 def test_cost_bound_errors(ddasp_bin, tmp_path):
     path = tmp_path / "simple.lp"
     path.write_text(OPT_PROGRAMS["simple"])  # two priority levels (1 and 0)
@@ -215,9 +264,10 @@ def test_cost_bound_errors(ddasp_bin, tmp_path):
     assert proc.returncode == 1 and "only 2 #minimize priority level(s)" in proc.stderr
     plain = tmp_path / "plain.lp"
     plain.write_text("{ a }.")
-    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--cost-le", "1", str(plain)],
-                          capture_output=True, text=True)
-    assert proc.returncode == 1 and "#minimize" in proc.stderr
+    for option in (["--cost-le", "1"], ["--cost-histogram"]):
+        proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, *option, str(plain)],
+                              capture_output=True, text=True)
+        assert proc.returncode == 1 and "#minimize" in proc.stderr, option
 
 
 OPT_EXAMPLES = [p for p in STANDALONE_EXAMPLES if "#minimize" in p.read_text()]
