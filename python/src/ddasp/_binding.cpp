@@ -283,6 +283,8 @@ PYBIND11_MODULE(_core, m) {
              py::arg("atom"), py::arg("value") = 0,
              "Add an #external atom (value: 0 free, 1 true, 2 false, 3 release; all are treated as free).")
         .def("add_projection", &Program::add_projection, py::arg("atoms"), "Record a #project statement.")
+        .def("add_assumption", &Program::add_assumption, py::arg("literals"),
+             "Add an assumption: every answer set must satisfy all of the literals.")
         .def_property_readonly("num_rules", [](const Program& p) { return p.rules().size(); })
         .def_property_readonly("max_atom", &Program::max_atom)
         .def("__str__", &Program::to_string);

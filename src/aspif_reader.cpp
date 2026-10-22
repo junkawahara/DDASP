@@ -140,6 +140,12 @@ void read_projection(LineTokens& t, int line_no, Program& prog) {
     prog.add_projection(atoms);
 }
 
+void read_assumption(LineTokens& t, int line_no, Program& prog) {
+    std::vector<Literal> lits = read_literals(t, line_no, "assumption");
+    t.expect_end();
+    prog.add_assumption(lits);
+}
+
 void read_output(LineTokens& t, int line_no, Program& prog) {
     size_t len = t.next_count("output string length");
     std::string name = t.next_fixed_string(len);
@@ -210,7 +216,7 @@ Program read_aspif(std::istream& in, std::vector<std::string>* warnings) {
                 read_external(t, line_no, prog);
                 break;
             case 6:
-                warn(warnings, line_no, "assumption statement ignored");
+                read_assumption(t, line_no, prog);
                 break;
             case 7:
                 warn(warnings, line_no, "heuristic statement ignored");

@@ -558,6 +558,7 @@ public:
             st.load_time = t.lap();
             st.loaded_dds = loaded_->size();
         }
+        build_assumptions(parts);
         BDD stable = conjoin_sorted(parts);
         parts.clear();
         st.conjoin_time = t.lap();
@@ -814,6 +815,28 @@ private:
             p.bdd = zdd_to_bdd_over(family, to);  // atoms never true in the family are false
             p.uses = target.atoms;
             p.first = true;  // a strong constraint over free atoms: prune everything else with it
+            parts.push_back(p);
+        }
+    }
+
+    /**
+     * Assumptions: every answer set satisfies each assumed literal. Unit
+     * integrity constraints over X, conjoined before everything else so that
+     * they prune the intermediate results.
+     */
+    void build_assumptions(std::vector<Part>& parts) const {
+        const std::vector<Literal>& lits = prog_.assumptions();
+        for (size_t i = 0; i < lits.size(); ++i) {
+            Atom a = atom_of(lits[i]);
+            Part p;
+            if (var_of(a) == 0) {  // an atom of no rule is false
+                if (is_positive(lits[i])) p.bdd = BDD::False;
+                else continue;
+            } else {
+                p.bdd = lit_x(lits[i]);
+                p.uses.push_back(a);
+            }
+            p.first = true;
             parts.push_back(p);
         }
     }

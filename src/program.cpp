@@ -74,6 +74,14 @@ void Program::add_projection(const std::vector<Atom>& atoms) {
     }
 }
 
+void Program::add_assumption(const std::vector<Literal>& literals) {
+    for (size_t i = 0; i < literals.size(); ++i) check_literal(literals[i], "an assumption");
+    for (size_t i = 0; i < literals.size(); ++i) {
+        note_literal(literals[i]);
+        assumptions_.push_back(literals[i]);
+    }
+}
+
 namespace {
 
 void write_weighted(std::ostringstream& os, const std::vector<WeightedLiteral>& lits) {
@@ -119,6 +127,11 @@ std::string Program::to_string() const {
     }
     for (size_t e = 0; e < externals_.size(); ++e) {
         os << "5 " << externals_[e].atom << ' ' << static_cast<int>(externals_[e].value) << '\n';
+    }
+    if (!assumptions_.empty()) {
+        os << "6 " << assumptions_.size();
+        for (size_t i = 0; i < assumptions_.size(); ++i) os << ' ' << assumptions_[i];
+        os << '\n';
     }
     os << "0\n";
     return os.str();

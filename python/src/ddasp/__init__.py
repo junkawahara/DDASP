@@ -83,7 +83,7 @@ class Observer(_ClingoObserver):
         warnings.warn(f"ddasp: {what} statement ignored", RuntimeWarning, stacklevel=3)
 
     def assume(self, literals: Sequence[int]) -> None:
-        self._ignored("assumption")
+        self.program.add_assumption(list(literals))
 
     def heuristic(self, atom: int, type_, bias: int, priority: int, condition: Sequence[int]) -> None:
         self._ignored("heuristic")

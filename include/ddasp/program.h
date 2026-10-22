@@ -161,6 +161,8 @@ public:
     void add_external(const External& external);
     /** @brief Record a #project statement (kept for information only). */
     void add_projection(const std::vector<Atom>& atoms);
+    /** @brief Add an assumption: every answer set must satisfy all of the literals. */
+    void add_assumption(const std::vector<Literal>& literals);
     ///@}
 
     const std::vector<Rule>& rules() const { return rules_; }
@@ -168,6 +170,8 @@ public:
     const std::vector<Output>& outputs() const { return outputs_; }
     const std::vector<External>& externals() const { return externals_; }
     const std::vector<Atom>& projections() const { return projections_; }
+    /** @brief Literals of every assumption statement, in program order. */
+    const std::vector<Literal>& assumptions() const { return assumptions_; }
 
     /** @brief Largest atom id mentioned anywhere in the program (0 if none). */
     Atom max_atom() const { return max_atom_; }
@@ -184,6 +188,7 @@ private:
     std::vector<Output> outputs_;
     std::vector<External> externals_;
     std::vector<Atom> projections_;
+    std::vector<Literal> assumptions_;
     Atom max_atom_;
 };
 

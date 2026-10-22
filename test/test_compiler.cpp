@@ -196,6 +196,16 @@ TEST(Compiler, ExternalDefinedByARuleIsNotFree) {
     EXPECT_EQ(F(S(), S(1)), compile_family("asp 1 0 0\n1 1 1 1 0 0\n5 1 0\n0\n"));
 }
 
+TEST(Compiler, AssumptionsRestrictTheAnswerSets) {
+    // {a; b}. c :- a.  assume a, not b  ->  {a, c} only
+    EXPECT_EQ(F(S(1, 3)), compile_family("asp 1 0 0\n1 1 2 1 2 0 0\n1 0 1 3 0 1 1\n6 2 1 -2\n0\n"));
+    // An assumed atom of no rule is false: assuming it leaves nothing, assuming its negation changes nothing.
+    EXPECT_EQ(Family(), compile_family("asp 1 0 0\n1 1 1 1 0 0\n6 1 2\n0\n"));
+    EXPECT_EQ(F(S(), S(1)), compile_family("asp 1 0 0\n1 1 1 1 0 0\n6 1 -2\n0\n"));
+    // Assumptions do not make an atom supported: a :- b. with b assumed... b has no rule, so nothing.
+    EXPECT_EQ(Family(), compile_family("asp 1 0 0\n1 0 1 1 0 1 2\n6 1 1\n0\n"));
+}
+
 TEST(Compiler, UnsupportedAtomInBodyOnly) {
     // a :- b.   (b has no rule)
     EXPECT_EQ(F(S()), compile_family("asp 1 0 0\n1 0 1 1 0 1 2\n0\n"));

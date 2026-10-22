@@ -166,3 +166,22 @@ def test_result_maps_are_plain_dicts():
     assert [c["weights"] for c in ddasp.compile_text("{ a }. c :- a. #minimize{ 1 : c }. #show a/0.").costs] == [
         {ddasp.compile_text("{ a }. c :- a. #minimize{ 1 : c }. #show a/0.").atom_to_level[2]: 1}
     ]
+
+
+def test_assumptions_from_the_backend():
+    import clingo
+
+    ctl = clingo.Control()
+    ctl.add("base", [], "{ a; b }. c :- a. #show a/0. #show b/0. #show c/0.")
+    observer = ddasp.Observer()
+    ctl.register_observer(observer)
+    ctl.ground([("base", [])])
+    lit = {str(s.symbol): s.literal for s in ctl.symbolic_atoms}
+    with ctl.backend() as backend:
+        backend.add_assume([lit["a"], -lit["b"]])
+    res = ddasp.compile(observer.program)
+    assert set(res.answer_sets()) == {frozenset({"a", "c"})}
+    # clingo honours the same assumptions when solving
+    with ctl.solve(yield_=True) as handle:
+        models = [frozenset(str(s) for s in m.symbols(shown=True)) for m in handle]
+    assert set(models) == set(res.answer_sets())

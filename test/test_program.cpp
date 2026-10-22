@@ -59,6 +59,9 @@ TEST(Program, MaxAtomTracksAllStatements) {
     EXPECT_EQ(12, p.max_atom());
     p.add_projection(std::vector<Atom>(1, 13));
     EXPECT_EQ(13, p.max_atom());
+    p.add_assumption(std::vector<Literal>(1, -14));
+    EXPECT_EQ(14, p.max_atom());
+    EXPECT_EQ(1u, p.assumptions().size());
     EXPECT_EQ(1u, p.rules().size());
     EXPECT_EQ(1u, p.minimizes().size());
     EXPECT_EQ(1u, p.outputs().size());
@@ -107,6 +110,8 @@ TEST(Program, RejectsNonPositiveAtomsAndZeroLiterals) {
     EXPECT_THROW(p.add_output(Output("a", std::vector<Literal>(1, 0))), std::invalid_argument);
     EXPECT_THROW(p.add_external(External(0, ExternalValue::Free)), std::invalid_argument);
     EXPECT_THROW(p.add_projection(std::vector<Atom>(1, -2)), std::invalid_argument);
+    EXPECT_THROW(p.add_assumption(std::vector<Literal>(1, 0)), std::invalid_argument);
+    EXPECT_TRUE(p.assumptions().empty());
     // Nothing was added and the largest atom is unchanged.
     EXPECT_TRUE(p.rules().empty() && p.minimizes().empty() && p.outputs().empty() && p.externals().empty());
     EXPECT_TRUE(p.projections().empty());

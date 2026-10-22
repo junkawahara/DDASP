@@ -32,7 +32,7 @@ private:
  * @brief Parse an aspif program from a stream.
  *
  * Supported statements: rule (1), minimize (2), projection (3), output (4),
- * external (5), comment (10) and end (0). Assumption (6), heuristic (7),
+ * external (5), assumption (6), comment (10) and end (0). Heuristic (7),
  * edge (8) and theory (9) statements are skipped with a warning.
  *
  * Incremental programs (several steps each terminated by `0`) are read as a

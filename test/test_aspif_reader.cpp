@@ -119,7 +119,6 @@ TEST(AspifReader, CommentsBlankLinesAndIncrementalSteps) {
 TEST(AspifReader, SkippedStatementsProduceWarnings) {
     const char* text =
         "asp 1 0 0\n"
-        "6 1 1\n"
         "7 0 1 1 0 0\n"
         "8 0 1 0\n"
         "9 0 1 2\n"
@@ -127,11 +126,24 @@ TEST(AspifReader, SkippedStatementsProduceWarnings) {
     std::vector<std::string> warnings;
     Program p = read_aspif_string(text, &warnings);
     EXPECT_TRUE(p.rules().empty());
-    ASSERT_EQ(4u, warnings.size());
-    EXPECT_NE(std::string::npos, warnings[0].find("assumption"));
-    EXPECT_NE(std::string::npos, warnings[1].find("heuristic"));
-    EXPECT_NE(std::string::npos, warnings[2].find("edge"));
-    EXPECT_NE(std::string::npos, warnings[3].find("theory"));
+    ASSERT_EQ(3u, warnings.size());
+    EXPECT_NE(std::string::npos, warnings[0].find("heuristic"));
+    EXPECT_NE(std::string::npos, warnings[1].find("edge"));
+    EXPECT_NE(std::string::npos, warnings[2].find("theory"));
+}
+
+TEST(AspifReader, Assumptions) {
+    std::vector<std::string> warnings;
+    Program p = read_aspif_string("asp 1 0 0\n6 2 1 -2\n6 1 3\n0\n", &warnings);
+    EXPECT_TRUE(warnings.empty());
+    std::vector<Literal> expected;
+    expected.push_back(1);
+    expected.push_back(-2);
+    expected.push_back(3);
+    EXPECT_EQ(expected, p.assumptions());
+    EXPECT_EQ(3, p.max_atom());
+    EXPECT_NE(std::string::npos, p.to_string().find("6 3 1 -2 3\n"));
+    EXPECT_THROW(read_aspif_string("asp 1 0 0\n6 1 0\n0\n"), AspifError);
 }
 
 TEST(AspifReader, MissingTerminatorIsAWarning) {
