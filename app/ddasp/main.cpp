@@ -140,8 +140,10 @@ void usage(std::ostream& os) {
           "                     classical (models of the rules read as implications); the\n"
           "                     summary line is then `supported models:` / `classical models:`\n"
           "  --method M         stable-model method: scc (default) or twocopy\n"
-          "  --order H          variable order heuristic: name (default), id, or a\n"
-          "                     file with one atom name (or __atomN) per line (top of\n"
+          "  --order H          variable order heuristic: name (default), id, force (the\n"
+          "                     FORCE heuristic: from the name order, atoms move to the\n"
+          "                     centre of gravity of their rules while the span improves),\n"
+          "                     or a file with one atom name (or __atomN) per line (top of\n"
           "                     the DD first; remaining atoms follow in name order)\n"
           "  --gringo CMD       grounder command (default: gringo); it is run as\n"
           "                     `CMD --output=intermediate [-c NAME=VALUE...] FILE...`\n"
@@ -636,7 +638,7 @@ int main(int argc, char** argv) {
         copts.external_values = opt.external_values;
         copts.method = parse_method(opt.method);
         copts.semantics = parse_semantics(opt.semantics);
-        if (opt.order == "name" || opt.order == "id") {
+        if (opt.order == "name" || opt.order == "id" || opt.order == "force") {
             copts.order_heuristic = parse_order_heuristic(opt.order);
         } else {
             copts.order = read_order_file(opt.order, program);
@@ -655,6 +657,7 @@ int main(int argc, char** argv) {
             stat_items.push_back(stat_count("shown atoms", res.vars.size()));
             stat_items.push_back(stat_count("aux vars", st.aux_vars));
             stat_items.push_back(stat_count("groups", st.groups));
+            stat_items.push_back(stat_count("order span", st.order_span));
             stat_items.push_back(stat_count("models nodes", st.models_nodes));
             stat_items.push_back(stat_count("stable nodes", st.stable_nodes));
             stat_items.push_back(stat_count("zdd nodes", res.zdd.raw_size()));

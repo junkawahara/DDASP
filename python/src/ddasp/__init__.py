@@ -612,8 +612,10 @@ def compile(
                       it, auxiliary atoms (aggregates, ``not not``) included. Everything else
                       (projection, ``#minimize``, consequences, stored DDs) applies to the
                       chosen family.
-    :param order: ``"name"`` (default), ``"id"``, or a list of atom ids to place on top
-                  (the remaining atoms follow in name order).
+    :param order: ``"name"`` (default), ``"id"``, ``"force"`` (the FORCE heuristic: from the
+                  name order, atoms move to the centre of gravity of their rules while the
+                  span improves; see ``stats["order_span"]``), or a list of atom ids to place
+                  on top (the remaining atoms follow in name order).
     :param project: ``True`` (default): project the answer sets onto the shown atoms;
                     ``False``: every atom becomes a DD variable; ``"project"``: project
                     onto the atoms of the ``#project`` statements instead, when the

@@ -378,3 +378,12 @@ def test_sample():
     hidden = ddasp.compile_text("{ a; b }. c :- a. #show c/0.", project=False)  # c in 2 of 4 answer sets
     counts = Counter(hidden.sample(4000, seed=5))
     assert 1700 <= counts[frozenset({"c"})] <= 2300
+
+
+@pytest.mark.parametrize("name", sorted(INLINE_PROGRAMS))
+def test_force_order_matches_name_order(name):
+    text = INLINE_PROGRAMS[name]
+    by_name = ddasp.compile_text(text, project=False)
+    by_force = ddasp.compile_text(text, order="force", project=False)
+    assert Counter(by_force.answer_sets()) == Counter(by_name.answer_sets())
+    assert by_force.stats["order_span"] <= by_name.stats["order_span"]

@@ -312,6 +312,7 @@ Result compile_py(const Program& program, const std::string& method, const std::
     out.stats["loaded_dds"] = st.loaded_dds;
     out.stats["synthesized_atoms"] = st.synthesized_atoms;
     out.stats["simplified_rules"] = st.simplified_rules;
+    out.stats["order_span"] = st.order_span;
     out.stored_bytes = plain.stored_ok ? py::object(py::bytes(plain.stored_bytes)) : py::object(py::none());
     out.stored_error = plain.stored_error;
     out.stored_warnings = plain.stored_warnings;

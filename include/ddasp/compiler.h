@@ -57,12 +57,16 @@ Semantics parse_semantics(const std::string& name);
 /** @brief How the DD variable order of the atoms is chosen. */
 enum class OrderHeuristic {
     AtomId,       ///< ascending gringo atom id
-    NaturalName   ///< shown atoms sorted by name with numeric-aware comparison
+    NaturalName,  ///< shown atoms sorted by name with numeric-aware comparison
                   ///< (p(2) < p(10)); unnamed atoms are placed at the barycenter of
                   ///< the atoms they share rules with
+    Force         ///< FORCE (Aloul, Markov, Sakallah 2003) on the rules as hyperedges:
+                  ///< from the NaturalName order, every atom moves to the average centre
+                  ///< of gravity of the rules it occurs in, as long as the span (sum over
+                  ///< the rules of the distance between their first and last atom) improves
 };
 
-/** @brief Parse an order heuristic name ("id" or "name"); throws std::invalid_argument otherwise. */
+/** @brief Parse an order heuristic name ("id", "name" or "force"); throws std::invalid_argument otherwise. */
 OrderHeuristic parse_order_heuristic(const std::string& name);
 
 /** @brief Numeric-aware string comparison: digit runs compare as numbers, the rest as text. */
@@ -213,11 +217,13 @@ struct CompileStats {
     size_t loaded_dds;       ///< number of loaded DDs conjoined
     size_t synthesized_atoms;  ///< atoms of the loaded DDs that the program did not mention
     size_t simplified_rules;   ///< rules dropped or trimmed as tautologies before compiling (Program::without_tautologies)
+    uint64_t order_span;       ///< sum over the rules of the distance between the positions of their first and
+                               ///< last atom in the variable order (what OrderHeuristic::Force minimizes)
 
     CompileStats()
         : order_time(0), models_time(0), supported_time(0), conjoin_time(0), unfounded_time(0), convert_time(0), optimize_time(0),
           histogram_time(0), project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), atoms(0), groups(0), aux_vars(0),
-          load_time(0), loaded_dds(0), synthesized_atoms(0), simplified_rules(0) {}
+          load_time(0), loaded_dds(0), synthesized_atoms(0), simplified_rules(0), order_span(0) {}
 };
 
 /**

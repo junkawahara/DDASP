@@ -40,16 +40,16 @@ CompileOptions no_projection() {
     return o;
 }
 
-/** Compile with both methods and both order heuristics; check they agree and return the family. */
+/** Compile with both methods and every order heuristic; check they agree and return the family. */
 Family compile_family(const std::string& aspif, const CompileOptions& opts = no_projection()) {
     Program p = read_aspif_string(aspif);
     Family result;
     bool first = true;
     for (int m = 0; m < 2; ++m) {
-        for (int h = 0; h < 2; ++h) {
+        for (int h = 0; h < 3; ++h) {
             CompileOptions o = opts;
             o.method = m == 0 ? Method::TwoCopy : Method::Scc;
-            o.order_heuristic = h == 0 ? OrderHeuristic::AtomId : OrderHeuristic::NaturalName;
+            o.order_heuristic = h == 0 ? OrderHeuristic::AtomId : h == 1 ? OrderHeuristic::NaturalName : OrderHeuristic::Force;
             Family f = family_of(compile(p, o));
             if (first) {
                 result = f;
@@ -1014,4 +1014,37 @@ TEST(Compiler, SupportedAndClassicalSemantics) {
     EXPECT_EQ(0u, res.stats.aux_vars);
     EXPECT_EQ(0u, res.stats.groups);
     EXPECT_EQ(0u, res.stats.simplified_rules);
+}
+
+TEST(Compiler, ForceOrderReducesTheSpan) {
+    // {b1..b5} (atoms 6..10) and a_i :- b_i (atoms 1..5). The name order a1..a5 b1..b5 gives
+    // every a_i :- b_i a span of 5 and the choice rule 4 (29 in all); FORCE interleaves
+    // a_i with b_i: 1 per rule plus 8 for the choice rule, the optimum 13.
+    std::string aspif = "asp 1 0 0\n1 1 5 6 7 8 9 10 0 0\n";
+    for (int i = 1; i <= 5; ++i) aspif += "1 0 1 " + std::to_string(i) + " 0 1 " + std::to_string(i + 5) + "\n";
+    for (int i = 1; i <= 5; ++i) aspif += "4 2 a" + std::to_string(i) + " 1 " + std::to_string(i) + "\n";
+    for (int i = 1; i <= 5; ++i) aspif += "4 2 b" + std::to_string(i) + " 1 " + std::to_string(i + 5) + "\n";
+    aspif += "0\n";
+    Program p = read_aspif_string(aspif);
+    CompileOptions name = no_projection(), force = no_projection();
+    force.order_heuristic = OrderHeuristic::Force;
+    CompileResult by_name = compile(p, name);
+    CompileResult by_force = compile(p, force);
+    EXPECT_EQ(29u, by_name.stats.order_span);
+    EXPECT_EQ(13u, by_force.stats.order_span);
+    EXPECT_EQ(family_of(by_name), family_of(by_force));
+    EXPECT_EQ(32u, family_of(by_force).size());
+    // Every atom has a variable exactly once.
+    std::set<Atom> seen;
+    for (size_t v = 1; v < by_force.var_to_atom.size(); ++v) {
+        if (by_force.var_to_atom[v] != 0) {
+            EXPECT_TRUE(seen.insert(by_force.var_to_atom[v]).second);
+        }
+    }
+    EXPECT_EQ(10u, seen.size());
+    // A user-given order still goes on top.
+    force.order.push_back(10);
+    CompileResult pinned = compile(p, force);
+    EXPECT_EQ(10, pinned.var_to_atom[pinned.vars[0]]);
+    EXPECT_EQ(OrderHeuristic::Force, parse_order_heuristic("force"));
 }

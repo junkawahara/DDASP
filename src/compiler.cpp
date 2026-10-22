@@ -65,7 +65,8 @@ std::map<Atom, std::string> atom_names(const Program& prog) {
 OrderHeuristic parse_order_heuristic(const std::string& name) {
     if (name == "id") return OrderHeuristic::AtomId;
     if (name == "name") return OrderHeuristic::NaturalName;
-    throw std::invalid_argument("unknown order heuristic '" + name + "' (expected id or name)");
+    if (name == "force") return OrderHeuristic::Force;
+    throw std::invalid_argument("unknown order heuristic '" + name + "' (expected id, name or force)");
 }
 
 bool natural_less(const std::string& a, const std::string& b) {
@@ -268,6 +269,100 @@ std::vector<Atom> natural_name_order(const Program& prog, const std::vector<Atom
     return order;
 }
 
+/** The atoms of every rule (head and body, each atom once), for the span and the FORCE heuristic. */
+std::vector<std::vector<Atom> > rule_atom_sets(const Program& prog) {
+    std::vector<std::vector<Atom> > sets(prog.rules().size());
+    for (size_t r = 0; r < prog.rules().size(); ++r) {
+        const Rule& rule = prog.rules()[r];
+        std::vector<Atom>& in_rule = sets[r];
+        in_rule = rule.head;
+        for (size_t i = 0; i < rule.body.lits.size(); ++i) in_rule.push_back(atom_of(rule.body.lits[i].lit));
+        std::sort(in_rule.begin(), in_rule.end());
+        in_rule.erase(std::unique(in_rule.begin(), in_rule.end()), in_rule.end());
+    }
+    return sets;
+}
+
+/** Sum over the rules of the distance between the positions of their first and last atom. */
+uint64_t span_of(const std::vector<std::vector<Atom> >& rule_atoms, const std::vector<size_t>& pos) {
+    uint64_t span = 0;
+    for (size_t r = 0; r < rule_atoms.size(); ++r) {
+        const std::vector<Atom>& in_rule = rule_atoms[r];
+        if (in_rule.size() < 2) continue;
+        size_t lo = pos[in_rule[0]], hi = lo;
+        for (size_t i = 1; i < in_rule.size(); ++i) {
+            lo = std::min(lo, pos[in_rule[i]]);
+            hi = std::max(hi, pos[in_rule[i]]);
+        }
+        span += hi - lo;
+    }
+    return span;
+}
+
+/** CompileStats::order_span of an order (every atom of the program must be in it). */
+uint64_t order_span(const Program& prog, const std::vector<Atom>& order) {
+    Atom max_atom = 0;
+    for (size_t i = 0; i < order.size(); ++i) max_atom = std::max(max_atom, order[i]);
+    std::vector<size_t> pos(max_atom + 1, 0);
+    for (size_t i = 0; i < order.size(); ++i) pos[order[i]] = i;
+    return span_of(rule_atom_sets(prog), pos);
+}
+
+/**
+ * FORCE heuristic (Aloul, Markov, Sakallah 2003) on the hypergraph whose
+ * vertices are the atoms and whose hyperedges are the rules. Starting from the
+ * NaturalName order, each round puts every rule at the centre of gravity of
+ * its atoms and every atom at the average centre of its rules (atoms of no
+ * rule stay where they are), then sorts the atoms by that value, ties keeping
+ * their order. Rounds continue while the span decreases (at most 50); the
+ * best order is kept and the spines are re-imposed on it.
+ */
+std::vector<Atom> force_order(const Program& prog, const std::vector<Atom>& atoms,
+                              const std::map<Atom, std::string>& names, const Spines& spines) {
+    std::vector<Atom> order = natural_name_order(prog, atoms, names, spines);
+    if (order.size() < 3) return order;
+    Atom max_atom = atoms.back();
+    std::vector<std::vector<Atom> > rule_atoms = rule_atom_sets(prog);
+    std::vector<std::vector<size_t> > rules_of(max_atom + 1);
+    for (size_t r = 0; r < rule_atoms.size(); ++r) {
+        if (rule_atoms[r].size() < 2) continue;
+        for (size_t i = 0; i < rule_atoms[r].size(); ++i) rules_of[rule_atoms[r][i]].push_back(r);
+    }
+    std::vector<size_t> pos(max_atom + 1, 0);
+    for (size_t i = 0; i < order.size(); ++i) pos[order[i]] = i;
+    uint64_t best_span = span_of(rule_atoms, pos);
+    std::vector<Atom> best = order;
+    std::vector<double> cog(rule_atoms.size(), 0.0), key(max_atom + 1, 0.0);
+    for (int round = 0; round < 50; ++round) {
+        for (size_t r = 0; r < rule_atoms.size(); ++r) {
+            if (rule_atoms[r].size() < 2) continue;
+            double sum = 0;
+            for (size_t i = 0; i < rule_atoms[r].size(); ++i) sum += static_cast<double>(pos[rule_atoms[r][i]]);
+            cog[r] = sum / static_cast<double>(rule_atoms[r].size());
+        }
+        for (size_t i = 0; i < order.size(); ++i) {
+            Atom a = order[i];
+            const std::vector<size_t>& rs = rules_of[a];
+            if (rs.empty()) {
+                key[a] = static_cast<double>(pos[a]);
+                continue;
+            }
+            double sum = 0;
+            for (size_t k = 0; k < rs.size(); ++k) sum += cog[rs[k]];
+            key[a] = sum / static_cast<double>(rs.size());
+        }
+        KeyLess kl = {&key};
+        std::stable_sort(order.begin(), order.end(), kl);  // KeyLess breaks ties by atom id
+        for (size_t i = 0; i < order.size(); ++i) pos[order[i]] = i;
+        uint64_t span = span_of(rule_atoms, pos);
+        if (span >= best_span) break;
+        best_span = span;
+        best = order;
+    }
+    apply_spines(best, spines);
+    return best;
+}
+
 /**
  * Atom order from top to bottom: the user-given order first, then the heuristic
  * order, in which the atoms of every loaded DD keep their stored order (spines).
@@ -286,6 +381,8 @@ std::vector<Atom> resolve_order(const Program& prog, const std::vector<Atom>& at
     std::vector<Atom> rest = atoms;
     if (options.order_heuristic == OrderHeuristic::NaturalName) {
         rest = natural_name_order(prog, atoms, names, spines);
+    } else if (options.order_heuristic == OrderHeuristic::Force) {
+        rest = force_order(prog, atoms, names, spines);
     } else {
         apply_spines(rest, spines);
     }
@@ -1199,6 +1296,7 @@ CompileResult compile_with(const Program& program, const CompileOptions& options
         for (size_t d = 0; d < loaded->size(); ++d) spines.push_back((*loaded)[d].atoms);
     }
     std::vector<Atom> order = resolve_order(program, atoms, options, res.names, spines);
+    res.stats.order_span = order_span(program, order);
     res.stats.order_time = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     Compiler c(program, order, shown, options, loaded);
     return c.run(res);

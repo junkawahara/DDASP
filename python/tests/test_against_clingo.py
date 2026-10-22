@@ -616,3 +616,13 @@ def test_sample_option(ddasp_bin, tmp_path):
     assert proc.returncode != 0 and "--sample" in proc.stderr
     _, err = run_ddasp(ddasp_bin, [path], "--seed", "1")
     assert "no effect" in err
+
+
+def test_order_force_option(ddasp_bin):
+    queens = EXAMPLES / "queens.lp"
+    out, err = run_ddasp(ddasp_bin, [queens], "-q", "--count", "--order", "force", "--stats")
+    assert out.strip() == "4"
+    spans = {line.split(":")[0]: int(line.split(":")[1]) for line in err.splitlines() if line.startswith("order span")}
+    _, err_name = run_ddasp(ddasp_bin, [queens], "-q", "--count", "--stats")
+    span_name = int([line for line in err_name.splitlines() if line.startswith("order span")][0].split(":")[1])
+    assert spans["order span"] <= span_name
