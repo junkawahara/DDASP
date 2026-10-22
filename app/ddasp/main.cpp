@@ -19,6 +19,7 @@
 #include <map>
 #include <set>
 #include <memory>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -63,6 +64,10 @@ struct Options {
     std::string semantics = "stable";
     std::string order = "name";
     size_t enumerate_limit = 0;  // 0 = unlimited
+    size_t sample = 0;           // --sample N, 0 = none
+    bool distinct = false;       // --distinct: samples without replacement
+    bool seed_given = false;
+    uint64_t seed = 0;           // --seed
     uint64_t node_max = 0;       // --node-max, 0 = unlimited
 };
 
@@ -86,7 +91,13 @@ void usage(std::ostream& os) {
           "                     --enumerate), one `K[,K..]: atoms` line per answer set;\n"
           "                     after projection a set is listed once, at the smallest\n"
           "                     cost of the answer sets it stands for; --limit N gives\n"
-          "                     the N best\n"          "  --brave            print the brave consequences (the names displayed by\n"
+          "                     the N best\n"          "  --sample N         print N answer sets drawn uniformly at random (independent\n"
+          "                     draws, so a set can come up twice; after projection every\n"
+          "                     displayed set is equally likely; nothing if there is none)\n"
+          "  --distinct         with --sample: N different answer sets in random order (all\n"
+          "                     of them when N is not smaller than their number)\n"
+          "  --seed S           seed of the random draws (default: a random seed)\n"
+          "  --brave            print the brave consequences (the names displayed by\n"
           "                     some answer set) on one line, like an answer set\n"
           "  --cautious         print the cautious consequences (the names displayed\n"
           "                     by every answer set; nothing if there is none)\n"
@@ -200,6 +211,29 @@ bool parse_args(int argc, char** argv, Options& opt) {
         } else if (a == "--by-cost") {
             opt.by_cost = true;
             opt.enumerate = true;
+        } else if (a == "--sample") {
+            std::string v = need_value("--sample");
+            char* end = 0;
+            errno = 0;
+            unsigned long long n = std::strtoull(v.c_str(), &end, 10);
+            if (v.empty() || *end != '\0' || errno != 0 || v[0] == '-' || n == 0) {
+                std::cerr << "ddasp: --sample expects a positive integer, got '" << v << "'\n";
+                return false;
+            }
+            opt.sample = static_cast<size_t>(n);
+        } else if (a == "--distinct") {
+            opt.distinct = true;
+        } else if (a == "--seed") {
+            std::string v = need_value("--seed");
+            char* end = 0;
+            errno = 0;
+            unsigned long long n = std::strtoull(v.c_str(), &end, 10);
+            if (v.empty() || *end != '\0' || errno != 0 || v[0] == '-') {
+                std::cerr << "ddasp: --seed expects a non-negative integer, got '" << v << "'\n";
+                return false;
+            }
+            opt.seed = static_cast<uint64_t>(n);
+            opt.seed_given = true;
         } else if (a == "--brave") {
             opt.brave = true;
         } else if (a == "--cautious") {
@@ -289,6 +323,9 @@ bool parse_args(int argc, char** argv, Options& opt) {
     }
     if (opt.enumerate_limit != 0 && !opt.enumerate) {
         std::cerr << "ddasp: warning: --limit has no effect without --enumerate\n";
+    }
+    if ((opt.distinct || opt.seed_given) && opt.sample == 0) {
+        std::cerr << "ddasp: warning: --distinct and --seed have no effect without --sample\n";
     }
     bool bounded = !opt.cost_le.empty() || !opt.cost_ge.empty() || !opt.cost_eq.empty();
     if (opt.optimize && bounded) {
@@ -527,6 +564,11 @@ struct JsonWriter {
     void close() { os << "\n}\n"; }
 };
 
+/** Orders DD variables from the top level down (the order of --enumerate lines). */
+struct LevelDescending {
+    bool operator()(kyotodd::bddvar a, kyotodd::bddvar b) const { return kyotodd::bddlevofvar(a) > kyotodd::bddlevofvar(b); }
+};
+
 void print_names_line(const std::vector<std::string>& names) {
     for (size_t i = 0; i < names.size(); ++i) std::cout << (i ? " " : "") << names[i];
     std::cout << "\n";
@@ -723,50 +765,83 @@ int main(int argc, char** argv) {
             std::cout << "}";
         }
 
+        // One displayed set: a text line (`K[,K..]: atoms` with a cost) or the `index`-th
+        // element of a JSON array. The set is given top level first.
+        auto emit_set = [&](const std::vector<long long>* cost, const std::vector<kyotodd::bddvar>& set, size_t index) {
+            std::vector<Atom> atoms;  // top level first = variable order
+            for (size_t j = 0; j < set.size(); ++j) atoms.push_back(res.var_to_atom[set[j]]);
+            std::vector<std::string> shown = res.shown_names(atoms);
+            if (opt.json) {
+                std::cout << (index ? ",\n    " : "\n    ");
+                if (cost) {
+                    std::cout << "{\"cost\": ";
+                    json_numbers(std::cout, *cost);
+                    std::cout << ", \"atoms\": ";
+                    json_strings(std::cout, shown);
+                    std::cout << "}";
+                } else {
+                    json_strings(std::cout, shown);
+                }
+            } else {
+                std::string prefix;
+                if (cost) {
+                    for (size_t c = 0; c < cost->size(); ++c) prefix += (c ? "," : "") + std::to_string((*cost)[c]);
+                    prefix += ":";
+                }
+                std::cout << prefix;
+                for (size_t j = 0; j < shown.size(); ++j) std::cout << (j || !prefix.empty() ? " " : "") << shown[j];
+                std::cout << "\n";
+            }
+        };
+
         if (opt.enumerate) {
             // Streamed from the ZDD: --limit stops early without expanding the family.
             size_t printed = 0;
             size_t limit = opt.enumerate_limit;
-            auto emit_set = [&](const std::vector<long long>* cost, const std::vector<kyotodd::bddvar>& set) -> bool {
-                std::vector<Atom> atoms;  // top level first = variable order
-                for (size_t j = 0; j < set.size(); ++j) atoms.push_back(res.var_to_atom[set[j]]);
-                std::vector<std::string> shown = res.shown_names(atoms);
-                if (opt.json) {
-                    std::cout << (printed ? ",\n    " : "\n    ");
-                    if (cost) {
-                        std::cout << "{\"cost\": ";
-                        json_numbers(std::cout, *cost);
-                        std::cout << ", \"atoms\": ";
-                        json_strings(std::cout, shown);
-                        std::cout << "}";
-                    } else {
-                        json_strings(std::cout, shown);
-                    }
-                } else {
-                    std::string prefix;  // `K[,K..]:` with --by-cost
-                    if (cost) {
-                        for (size_t c = 0; c < cost->size(); ++c) prefix += (c ? "," : "") + std::to_string((*cost)[c]);
-                        prefix += ":";
-                    }
-                    std::cout << prefix;
-                    for (size_t j = 0; j < shown.size(); ++j) std::cout << (j || !prefix.empty() ? " " : "") << shown[j];
-                    std::cout << "\n";
-                }
-                ++printed;
-                return limit == 0 || printed < limit;
-            };
             if (opt.json) {
                 json.field("answer_sets");
                 std::cout << "[";
             }
+            auto next = [&](const std::vector<long long>* cost, const std::vector<kyotodd::bddvar>& set) -> bool {
+                emit_set(cost, set, printed++);
+                return limit == 0 || printed < limit;
+            };
             if (opt.by_cost) {  // best first
                 enumerate_by_cost(res, [&](const std::vector<long long>& cost, const std::vector<kyotodd::bddvar>& set) -> bool {
-                    return emit_set(&cost, set);
+                    return next(&cost, set);
                 });
             } else {
-                for_each_set(res.zdd, [&](const std::vector<kyotodd::bddvar>& set) -> bool { return emit_set(0, set); });
+                for_each_set(res.zdd, [&](const std::vector<kyotodd::bddvar>& set) -> bool { return next(0, set); });
             }
             if (opt.json) std::cout << (printed ? "\n  ]" : "]");
+        }
+
+        if (opt.sample != 0) {
+            // Uniform over the (projected) answer sets: independent draws, or without
+            // replacement in random order with --distinct. Nothing when there is none.
+            std::mt19937_64 rng(opt.seed_given ? opt.seed : static_cast<uint64_t>(std::random_device()()));
+            size_t drawn = 0;
+            if (opt.json) {
+                json.field("samples");
+                std::cout << "[";
+            }
+            auto emit_sample = [&](std::vector<kyotodd::bddvar> set) {
+                std::sort(set.begin(), set.end(), LevelDescending());  // top level first, like --enumerate
+                emit_set(0, set, drawn++);
+            };
+            if (!res.zdd.is_zero()) {
+                if (opt.distinct) {
+                    kyotodd::ZddRandomRange<std::mt19937_64> range(res.zdd, rng);
+                    for (kyotodd::ZddRandomIterator<std::mt19937_64> it = range.begin();
+                         it != range.end() && drawn < opt.sample; ++it) {
+                        emit_sample(*it);
+                    }
+                } else {
+                    kyotodd::ZddCountMemo memo(res.zdd);
+                    for (size_t i = 0; i < opt.sample; ++i) emit_sample(res.zdd.uniform_sample(rng, memo));
+                }
+            }
+            if (opt.json) std::cout << (drawn ? "\n  ]" : "]");
         }
         if (opt.json) json.close();
 

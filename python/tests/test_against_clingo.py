@@ -582,3 +582,37 @@ def test_semantics_option(ddasp_bin):
     proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--semantics", "minimal", str(loop)],
                           capture_output=True, text=True)
     assert proc.returncode != 0 and "semantics" in proc.stderr
+
+
+def test_sample_option(ddasp_bin, tmp_path):
+    path = tmp_path / "p.lp"
+    path.write_text("{ a; b; c }. :- a, b, c. #show a/0. #show b/0. #show c/0.")  # 7 answer sets
+    text, _ = run_ddasp(ddasp_bin, [path], "-q", "--enumerate")
+    family = {frozenset(line.split()) for line in text.splitlines()}
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--sample", "30", "--seed", "7")
+    samples = [frozenset(line.split()) for line in out.splitlines()]
+    assert len(samples) == 30 and set(samples) <= family
+    again, _ = run_ddasp(ddasp_bin, [path], "-q", "--sample", "30", "--seed", "7")
+    assert again == out, "the seed makes the draw reproducible"
+    other, _ = run_ddasp(ddasp_bin, [path], "-q", "--sample", "30", "--seed", "8")
+    assert other != out
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--sample", "5", "--distinct", "--seed", "3")
+    distinct = [frozenset(line.split()) for line in out.splitlines()]
+    assert len(distinct) == 5 and len(set(distinct)) == 5 and set(distinct) <= family
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--sample", "100", "--distinct")
+    assert {frozenset(line.split()) for line in out.splitlines()} == family and len(out.splitlines()) == 7
+    # Atoms of a sample line come in variable order, like --enumerate.
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--sample", "50", "--seed", "1")
+    assert all(line.split() == sorted(line.split()) for line in out.splitlines())
+    out, _ = run_ddasp(ddasp_bin, [path], "--json", "--sample", "3", "--seed", "1")
+    data = json.loads(out)
+    assert data["count"] == 7 and len(data["samples"]) == 3 and all(frozenset(s) in family for s in data["samples"])
+    path.write_text("a. :- a. #show a/0.")
+    out, _ = run_ddasp(ddasp_bin, [path], "-q", "--sample", "3")
+    assert out == ""
+    out, _ = run_ddasp(ddasp_bin, [path], "--json", "--sample", "3", "--distinct")
+    assert json.loads(out) == {"count": 0, "samples": []}
+    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--sample", "0", str(path)], capture_output=True, text=True)
+    assert proc.returncode != 0 and "--sample" in proc.stderr
+    _, err = run_ddasp(ddasp_bin, [path], "--seed", "1")
+    assert "no effect" in err

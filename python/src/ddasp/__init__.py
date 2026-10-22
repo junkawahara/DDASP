@@ -13,6 +13,7 @@ Grounding is done by clingo; the ground program is collected through a
 """
 
 import os
+import random
 import warnings
 import weakref
 from collections.abc import Mapping
@@ -317,6 +318,37 @@ class Result:
         decode = self._set_decoder()
         for s in self.zdd.enumerate():
             yield decode(s)
+
+    def sample(self, k: int = 1, seed: Optional[int] = None, distinct: bool = False) -> list:
+        """``k`` answer sets drawn uniformly at random (via kyotodd), as frozensets of shown names.
+
+        Independent draws with replacement by default, so a set can come up
+        twice and ``k`` may exceed :attr:`count`; with ``distinct`` the sets are
+        all different, in uniformly random order, at most :attr:`count` of them.
+        Every projected answer set is equally likely (each displayed set once;
+        ``project=False`` draws over all answer sets). ``seed`` makes the draw
+        reproducible; ``None`` seeds from the operating system. An inconsistent
+        program gives ``[]``.
+        """
+        import kyotodd
+
+        if isinstance(k, bool) or not isinstance(k, int) or k < 0:
+            raise ValueError(f"sample: k must be a non-negative integer, got {k!r}")
+        rng = random.Random(seed) if seed is not None else random.SystemRandom()
+        decode = self._set_decoder()
+        zdd = self.zdd
+        if distinct:
+            out = []
+            if k > 0:
+                for s in zdd.iter_random(seed=rng.getrandbits(64)):
+                    out.append(decode(s))
+                    if len(out) >= k:
+                        break
+            return out
+        if k == 0 or self.count == 0:
+            return []
+        memo = kyotodd.ZddCountMemo(zdd)
+        return [decode(zdd.uniform_sample_with_memo(memo, rng.getrandbits(64))) for _ in range(k)]
 
     def _set_decoder(self):
         """A function turning an enumerated kyotodd set into the frozenset of its shown names."""

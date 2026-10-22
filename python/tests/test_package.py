@@ -355,3 +355,26 @@ def test_tautological_rules_are_dropped():
     # e stays free: its only rule is a tautology (as in clingo)
     free = ddasp.compile_text("#external e. { g }. e :- g, e. #show e/0. #show g/0.")
     assert free.count == 4
+
+
+def test_sample():
+    res = ddasp.compile_text("{ a; b; c }. :- a, b, c. #show a/0. #show b/0. #show c/0.")  # 7 answer sets
+    family = set(res.answer_sets())
+    samples = res.sample(5, seed=1)
+    assert len(samples) == 5 and set(samples) <= family
+    assert res.sample(5, seed=1) == samples
+    assert res.sample(0) == [] and res.sample(0, distinct=True) == []
+    distinct = res.sample(100, seed=2, distinct=True)
+    assert len(distinct) == 7 and set(distinct) == family
+    assert len(set(res.sample(4, seed=3, distinct=True))) == 4
+    # Uniform: 7000 draws, about 1000 per answer set.
+    counts = Counter(res.sample(7000, seed=4))
+    assert set(counts) == family and all(700 <= n <= 1300 for n in counts.values())
+    assert len(res.sample(3)) == 3  # OS seed
+    with pytest.raises(ValueError):
+        res.sample(-1)
+    assert ddasp.compile_text("a. :- a. #show a/0.").sample(3) == []
+    # Without projection every answer set is equally likely, hidden atoms included.
+    hidden = ddasp.compile_text("{ a; b }. c :- a. #show c/0.", project=False)  # c in 2 of 4 answer sets
+    counts = Counter(hidden.sample(4000, seed=5))
+    assert 1700 <= counts[frozenset({"c"})] <= 2300
