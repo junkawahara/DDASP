@@ -942,3 +942,32 @@ TEST(Compiler, CostHistogramCountsProjectedSetsByTheirSmallestCost) {
     Program no_minimize = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n0\n");
     EXPECT_THROW(compile(no_minimize, po), std::invalid_argument);
 }
+
+TEST(Compiler, TautologicalRulesDoNotDefineExternals) {
+    // #external e(1). {g(2)}. e | f(3) :- g, e.  e :- g, not g.
+    // Both rules are tautologies: e stays free (as in clingo) and f, left without a rule, is false.
+    Family fam = compile_family("asp 1 0 0\n5 1 2\n1 1 1 2 0 0\n1 0 2 1 3 0 2 2 1\n1 0 1 1 0 2 2 -2\n0\n");
+    EXPECT_EQ(F(S(), S(1), S(2), S(1, 2)), fam);
+    // #external e. {g}. e :- g, not e.   The rule is the constraint :- g, not e; e stays free.
+    fam = compile_family("asp 1 0 0\n5 1 2\n1 1 1 2 0 0\n1 0 1 1 0 2 2 -1\n0\n");
+    EXPECT_EQ(F(S(), S(1), S(1, 2)), fam);
+    // #external e. {e} :- e.   The choice is dropped: e is free.
+    fam = compile_family("asp 1 0 0\n5 1 2\n1 1 1 1 0 1 1\n0\n");
+    EXPECT_EQ(F(S(), S(1)), fam);
+    // #external e. {g}. e :- 1 { e; g }.   A weight body is not simplified: the rule defines e.
+    fam = compile_family("asp 1 0 0\n5 1 2\n1 1 1 2 0 0\n1 0 1 1 1 1 2 1 1 2 1\n0\n");
+    EXPECT_EQ(F(S(), S(1, 2)), fam);
+}
+
+TEST(Compiler, TautologiesKeepTheSupportOfTheOtherChoiceAtoms) {
+    // {a(1)}. {a; b(2)} :- a.   b keeps its support: {}, {a}, {a, b}.
+    Family fam = compile_family("asp 1 0 0\n1 1 1 1 0 0\n1 1 2 1 2 0 1 1\n0\n");
+    EXPECT_EQ(F(S(), S(1), S(1, 2)), fam);
+    // {a}. :- a, not a.   The constraint is dropped.
+    fam = compile_family("asp 1 0 0\n1 1 1 1 0 0\n1 0 0 0 2 1 -1\n0\n");
+    EXPECT_EQ(F(S(), S(1)), fam);
+    Program p = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n1 1 2 1 2 0 1 1\n1 0 0 0 2 1 -1\n0\n");
+    CompileResult res = compile(p, no_projection());
+    EXPECT_EQ(2u, res.stats.simplified_rules);
+    EXPECT_EQ(F(S(), S(1), S(1, 2)), family_of(res));
+}

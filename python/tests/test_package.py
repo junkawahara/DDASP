@@ -346,3 +346,12 @@ def test_node_max():
     assert ddasp.compile_text(text).count == 118264581564861424
     with pytest.raises(ValueError):
         ddasp.compile_text(text, node_max=0)
+
+
+def test_tautological_rules_are_dropped():
+    res = ddasp.compile_text("{ a }. { a; b } :- a. :- a, not a. #show a/0. #show b/0.", project=False)
+    assert res.stats["simplified_rules"] == 2
+    assert set(res.answer_sets()) == {frozenset(), frozenset({"a"}), frozenset({"a", "b"})}
+    # e stays free: its only rule is a tautology (as in clingo)
+    free = ddasp.compile_text("#external e. { g }. e :- g, e. #show e/0. #show g/0.")
+    assert free.count == 4

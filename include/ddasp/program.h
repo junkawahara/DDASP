@@ -10,6 +10,7 @@
  * negation), rules have a disjunctive or choice head and a normal or weight body.
  */
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -175,6 +176,24 @@ public:
 
     /** @brief Largest atom id mentioned anywhere in the program (0 if none). */
     Atom max_atom() const { return max_atom_; }
+
+    /**
+     * @brief The program without its tautological rules.
+     *
+     * A rule whose normal body contains an atom and its negation is dropped, and
+     * so is a disjunctive rule with a head atom in its positive body (it holds
+     * whatever the atom is and supports nothing). A head atom that occurs in
+     * the body of a choice rule, or in the negative body of a disjunctive rule,
+     * is removed from the head (`a | H :- B, not a` is `H :- B, not a`; a
+     * disjunctive head left empty makes the rule an integrity constraint, an
+     * emptied choice drops the rule). These transformations preserve strong
+     * equivalence, so the answer sets do not change; what changes is which
+     * #external atoms count as defined by a rule: like clingo, an external
+     * atom whose rules are all tautologies stays free. Weight bodies are left
+     * as they are. @p simplified, if given, receives the number of rules
+     * dropped or trimmed.
+     */
+    Program without_tautologies(size_t* simplified = 0) const;
 
     /** @brief Render the program as aspif-like text (for debugging and tests). */
     std::string to_string() const;

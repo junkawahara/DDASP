@@ -187,11 +187,12 @@ struct CompileStats {
     double load_time;        ///< mapping the loaded DDs onto the program's variables
     size_t loaded_dds;       ///< number of loaded DDs conjoined
     size_t synthesized_atoms;  ///< atoms of the loaded DDs that the program did not mention
+    size_t simplified_rules;   ///< rules dropped or trimmed as tautologies before compiling (Program::without_tautologies)
 
     CompileStats()
         : order_time(0), models_time(0), supported_time(0), conjoin_time(0), unfounded_time(0), convert_time(0), optimize_time(0),
           histogram_time(0), project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), atoms(0), groups(0), aux_vars(0),
-          load_time(0), loaded_dds(0), synthesized_atoms(0) {}
+          load_time(0), loaded_dds(0), synthesized_atoms(0), simplified_rules(0) {}
 };
 
 /**
@@ -295,6 +296,10 @@ const size_t kMaxBddVariables = 65536;
 
 /**
  * @brief Compile a program into a ZDD (and BDD) of its answer sets.
+ *
+ * The program is compiled without its tautological rules
+ * (Program::without_tautologies; the answer sets are the same), which decides
+ * which #external atoms a rule defines, as in clingo.
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
  *         when optimizing or bounding costs with a #minimize weight outside the
  *         32-bit range, a cost bound with more entries than #minimize priority

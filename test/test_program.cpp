@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "ddasp/aspif_reader.h"
 #include "ddasp/program.h"
 
 using namespace ddasp;
@@ -116,4 +117,41 @@ TEST(Program, RejectsNonPositiveAtomsAndZeroLiterals) {
     EXPECT_TRUE(p.rules().empty() && p.minimizes().empty() && p.outputs().empty() && p.externals().empty());
     EXPECT_TRUE(p.projections().empty());
     EXPECT_EQ(0, p.max_atom());
+}
+
+TEST(Program, WithoutTautologies) {
+    Program p = read_aspif_string(
+        "asp 1 0 0\n"
+        "1 0 2 1 3 0 2 2 1\n"        // 1 | 3 :- 2, 1            dropped: head atom in the positive body
+        "1 0 1 1 0 2 2 -1\n"         // 1 :- 2, not 1            becomes  :- 2, not 1
+        "1 1 2 1 2 0 1 1\n"          // {1; 2} :- 1              becomes  {2} :- 1
+        "1 1 1 1 0 1 1\n"            // {1} :- 1                 dropped
+        "1 0 0 0 2 1 -1\n"           // :- 1, not 1              dropped: contradictory body
+        "1 0 1 1 0 1 2\n"            // 1 :- 2                   kept
+        "1 0 1 1 1 1 2 1 1 2 1\n"    // 1 :- 1 { 1, 2 }          kept: weight bodies are not simplified
+        "1 0 2 3 1 0 3 2 -1 -3\n"    // 3 | 1 :- 2, not 1, not 3 becomes  :- 2, not 1, not 3
+        "2 0 1 1 1\n"
+        "4 1 a 1 1\n"
+        "5 1 0\n"
+        "0\n");
+    size_t simplified = 99;
+    Program q = p.without_tautologies(&simplified);
+    EXPECT_EQ(6u, simplified);
+    EXPECT_EQ(
+        "asp 1 0 0\n"
+        "1 0 0 0 2 2 -1\n"
+        "1 1 1 2 0 1 1\n"
+        "1 0 1 1 0 1 2\n"
+        "1 0 1 1 1 1 2 1 1 2 1\n"
+        "1 0 0 0 3 2 -1 -3\n"
+        "2 0 1 1 1\n"
+        "4 1 a 1 1\n"
+        "5 1 0\n"
+        "0\n",
+        q.to_string());
+    EXPECT_EQ(8u, p.rules().size()) << "the original program is not modified";
+    EXPECT_EQ(3, q.max_atom());
+    Program same = q.without_tautologies(&simplified);
+    EXPECT_EQ(0u, simplified);
+    EXPECT_EQ(q.to_string(), same.to_string());
 }

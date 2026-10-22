@@ -1171,9 +1171,10 @@ void validate_cost_options(const Program& program, const CompileOptions& o) {
 }
 
 CompileResult compile_with(const Program& program, const CompileOptions& options,
-                           const std::vector<LoadedTarget>* loaded) {
+                           const std::vector<LoadedTarget>* loaded, size_t simplified_rules) {
     validate_cost_options(program, options);
     CompileResult res;
+    res.stats.simplified_rules = simplified_rules;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     std::set<Atom> shown = collect_names(program, res);
     std::vector<Atom> atoms = program_atoms(program);
@@ -1242,11 +1243,15 @@ std::invalid_argument load_error(const std::string& what) { return std::invalid_
 }  // namespace
 
 CompileResult compile(const Program& program, const CompileOptions& options) {
-    return compile_with(program, options, 0);
+    size_t simplified = 0;
+    Program simple = program.without_tautologies(&simplified);
+    return compile_with(simple, options, 0, simplified);
 }
 
-CompileResult compile(const Program& program, const CompileOptions& options, const std::vector<LoadedDD>& loaded) {
-    if (loaded.empty()) return compile(program, options);
+CompileResult compile(const Program& input, const CompileOptions& options, const std::vector<LoadedDD>& loaded) {
+    if (loaded.empty()) return compile(input, options);
+    size_t simplified = 0;
+    Program program = input.without_tautologies(&simplified);
 
     std::map<std::string, std::set<Atom> > by_name = atoms_by_name(program);
     std::set<std::string> program_facts;
@@ -1323,7 +1328,7 @@ CompileResult compile(const Program& program, const CompileOptions& options, con
         }
     }
 
-    CompileResult res = compile_with(*prog, options, &targets);
+    CompileResult res = compile_with(*prog, options, &targets, simplified);
     res.stats.synthesized_atoms = synthesized;
     std::set<std::string> have(res.fact_names.begin(), res.fact_names.end());
     for (size_t d = 0; d < loaded.size(); ++d) {

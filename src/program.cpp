@@ -1,5 +1,6 @@
 #include "ddasp/program.h"
 
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -80,6 +81,50 @@ void Program::add_assumption(const std::vector<Literal>& literals) {
         note_literal(literals[i]);
         assumptions_.push_back(literals[i]);
     }
+}
+
+Program Program::without_tautologies(size_t* simplified) const {
+    Program out = *this;
+    out.rules_.clear();
+    size_t count = 0;
+    for (size_t r = 0; r < rules_.size(); ++r) {
+        const Rule& rule = rules_[r];
+        if (rule.body.type != BodyType::Normal) {
+            out.rules_.push_back(rule);
+            continue;
+        }
+        std::set<Atom> positive, negative;
+        for (size_t i = 0; i < rule.body.lits.size(); ++i) {
+            Literal l = rule.body.lits[i].lit;
+            (is_positive(l) ? positive : negative).insert(atom_of(l));
+        }
+        bool drop = false;
+        for (std::set<Atom>::const_iterator it = positive.begin(); it != positive.end() && !drop; ++it) {
+            if (negative.count(*it)) drop = true;  // the body contains a and not a
+        }
+        std::vector<Atom> head;
+        for (size_t h = 0; h < rule.head.size() && !drop; ++h) {
+            Atom a = rule.head[h];
+            if (positive.count(a)) {
+                if (rule.head_type == HeadType::Disjunction) drop = true;  // a | H :- a, B holds whatever a is
+                continue;  // {a} :- a, B cannot found a
+            }
+            if (negative.count(a)) continue;  // a | H :- not a, B  is  H :- not a, B
+            head.push_back(a);
+        }
+        if (drop || (rule.head_type == HeadType::Choice && head.empty() && !rule.head.empty())) {
+            ++count;
+            continue;
+        }
+        if (head.size() != rule.head.size()) {
+            ++count;
+            out.rules_.push_back(Rule(rule.head_type, head, rule.body));
+        } else {
+            out.rules_.push_back(rule);
+        }
+    }
+    if (simplified) *simplified = count;
+    return out;
 }
 
 namespace {

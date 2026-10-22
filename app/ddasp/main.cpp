@@ -502,6 +502,7 @@ int main(int argc, char** argv) {
         if (opt.stats) {
             const CompileStats& st = res.stats;
             std::cerr << "rules: " << program.rules().size() << "\n"
+                      << "tautological rules: " << st.simplified_rules << "\n"
                       << "atoms: " << st.atoms << "\n"
                       << "shown atoms: " << res.vars.size() << "\n"
                       << "aux vars: " << st.aux_vars << "\n"
