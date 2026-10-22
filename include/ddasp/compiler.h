@@ -50,6 +50,18 @@ OrderHeuristic parse_order_heuristic(const std::string& name);
 /** @brief Numeric-aware string comparison: digit runs compare as numbers, the rest as text. */
 bool natural_less(const std::string& a, const std::string& b);
 
+/**
+ * @brief One entry of a cost bound (see CompileOptions::cost_le): a cost, given
+ * either as an absolute value or relative to the optimal cost of its level.
+ */
+struct CostBound {
+    long long value;
+    bool relative;  ///< value is added to the optimum of the level (as optimize computes it)
+
+    CostBound() : value(0), relative(false) {}
+    CostBound(long long v, bool rel) : value(v), relative(rel) {}
+};
+
 /** @brief Compilation options. */
 struct CompileOptions {
     Method method;
@@ -80,6 +92,21 @@ struct CompileOptions {
      * (the default) every initial value is ignored.
      */
     bool external_values;
+    /**
+     * Bounds on the #minimize costs: keep only the answer sets whose cost vector
+     * (one cost per priority level, most important first, as reported in
+     * CompileResult::optimum) is lexicographically <= cost_le, >= cost_ge or
+     * equal to cost_eq, each compared on the levels the bound lists (a shorter
+     * bound leaves the lower priorities free); cost_le is clingo's
+     * --opt-mode=enum,K,... cost_le and cost_ge combine, cost_eq excludes both,
+     * and none of them combines with optimize. A relative entry stands for the
+     * optimum of its level plus the value; the optimum is then computed as
+     * optimize does and reported in CompileResult::optimum. Like optimize, the
+     * bounds apply before projection. Empty: no bound.
+     */
+    std::vector<CostBound> cost_le;
+    std::vector<CostBound> cost_ge;
+    std::vector<CostBound> cost_eq;
     /**
      * Atom order for the DD variables, listed from the top of the diagram down.
      * Atoms of the program missing from the list are appended below the listed
@@ -176,7 +203,10 @@ struct CompileResult {
     std::vector<kyotodd::bddvar> vars;
     /** @brief Cost functions of the #minimize statements, most important priority first. */
     std::vector<CostFunction> costs;
-    /** @brief Optimal cost per level (same order as @c costs); filled only when optimizing a consistent program. */
+    /**
+     * @brief Optimal cost per level (same order as @c costs); filled only when optimizing,
+     * or bounding costs relative to the optimum, on a consistent program.
+     */
     std::vector<long long> optimum;
     /** @brief Statistics of the compilation. */
     CompileStats stats;
@@ -220,9 +250,11 @@ const size_t kMaxBddVariables = 65536;
 /**
  * @brief Compile a program into a ZDD (and BDD) of its answer sets.
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
- *         when optimizing a #minimize weight outside the 32-bit range, more
- *         variables needed than kMaxBddVariables, use_project_statements
- *         without project_to_shown).
+ *         when optimizing or bounding costs with a #minimize weight outside the
+ *         32-bit range, a cost bound with more entries than #minimize priority
+ *         levels (or without any #minimize statement) or combined as
+ *         CompileOptions forbids, more variables needed than kMaxBddVariables,
+ *         use_project_statements without project_to_shown).
  */
 CompileResult compile(const Program& program, const CompileOptions& options = CompileOptions());
 

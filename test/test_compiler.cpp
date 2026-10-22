@@ -702,3 +702,150 @@ TEST(DdUtil, RenameZddTerminalsAndErrors) {
     EXPECT_THROW(rename_zdd(z, V(a, a, c), V(a, b, c)), std::invalid_argument);                 // source twice
     EXPECT_THROW(rename_zdd(z, std::vector<bddvar>(1, a), std::vector<bddvar>(1, b)), std::invalid_argument);
 }
+
+namespace {
+
+// {a;b;c;d} with two #minimize levels (every subset is an answer set):
+//   priority 2: 1:a, 1:b, 2:not b   ->  cost1 = 2 + [a] - [b]
+//   priority 1: 2:b, 2:c, 1:not d   ->  cost2 = 1 + 2[b] + 2[c] - [d]
+// The lexicographic optimum is (1, 2), reached by {b, d} alone; the global minimum of cost2 is 0.
+const char* kTwoLevelText =
+    "asp 1 0 0\n"
+    "1 1 4 1 2 3 4 0 0\n"
+    "2 2 3 1 1 2 1 -2 2\n"
+    "2 1 3 2 2 3 2 -4 1\n"
+    "0\n";
+
+std::vector<long long> two_level_costs(const std::set<Atom>& x) {
+    std::vector<long long> c(2);
+    c[0] = 2 + x.count(1) - x.count(2);
+    c[1] = 1 + 2 * x.count(2) + 2 * x.count(3) - x.count(4);
+    return c;
+}
+
+/** Sign of the lexicographic comparison of the first b.size() entries of c with b. */
+int lex_compare(const std::vector<long long>& c, const std::vector<long long>& b) {
+    for (size_t i = 0; i < b.size(); ++i) {
+        if (c[i] != b[i]) return c[i] < b[i] ? -1 : 1;
+    }
+    return 0;
+}
+
+/** Brute force: the subsets of {1..4} within the absolute bounds (an empty bound is no bound). */
+Family bounded_subsets(const std::vector<long long>& le, const std::vector<long long>& ge,
+                       const std::vector<long long>& eq) {
+    Family f;
+    for (int mask = 0; mask < 16; ++mask) {
+        std::set<Atom> x;
+        for (int a = 1; a <= 4; ++a) {
+            if (mask >> (a - 1) & 1) x.insert(a);
+        }
+        std::vector<long long> c = two_level_costs(x);
+        if (!le.empty() && lex_compare(c, le) > 0) continue;
+        if (!ge.empty() && lex_compare(c, ge) < 0) continue;
+        if (!eq.empty() && lex_compare(c, eq) != 0) continue;
+        f.insert(x);
+    }
+    return f;
+}
+
+std::vector<long long> LL(long long a) { return std::vector<long long>(1, a); }
+std::vector<long long> LL(long long a, long long b) { std::vector<long long> v = LL(a); v.push_back(b); return v; }
+
+std::vector<CostBound> bounds_of(const std::vector<long long>& v, bool relative) {
+    std::vector<CostBound> b;
+    for (size_t i = 0; i < v.size(); ++i) b.push_back(CostBound(v[i], relative));
+    return b;
+}
+
+CompileOptions bound_options(const std::vector<long long>& le, const std::vector<long long>& ge,
+                             const std::vector<long long>& eq) {
+    CompileOptions o = no_projection();
+    o.cost_le = bounds_of(le, false);
+    o.cost_ge = bounds_of(ge, false);
+    o.cost_eq = bounds_of(eq, false);
+    return o;
+}
+
+/** Compile kTwoLevelText with absolute bounds and compare with the brute force. */
+void expect_bounded(const std::vector<long long>& le, const std::vector<long long>& ge,
+                    const std::vector<long long>& eq) {
+    EXPECT_EQ(bounded_subsets(le, ge, eq), compile_family(kTwoLevelText, bound_options(le, ge, eq)))
+        << "le " << le.size() << " ge " << ge.size() << " eq " << eq.size() << " entries";
+}
+
+}  // namespace
+
+TEST(Compiler, CostBoundsCompareLexicographically) {
+    Program p = read_aspif_string(kTwoLevelText);
+    CompileResult plain = compile(p, no_projection());
+    ASSERT_EQ(2u, plain.costs.size());
+    EXPECT_EQ(2, plain.costs[0].priority);
+    EXPECT_EQ(2, plain.costs[0].offset);
+    EXPECT_EQ(1, plain.costs[1].offset);
+    EXPECT_EQ(16u, family_of(plain).size());
+    EXPECT_TRUE(plain.optimum.empty());
+    const std::vector<long long> none;
+
+    // Upper bounds: a one-entry bound leaves the second level free; (1, 1) keeps nothing.
+    expect_bounded(LL(2), none, none);
+    expect_bounded(LL(2, 2), none, none);
+    expect_bounded(LL(1, 1), none, none);
+    expect_bounded(LL(3, 5), none, none);  // everything
+    EXPECT_EQ(16u, bounded_subsets(LL(3, 5), none, none).size());
+    expect_bounded(LL(0), none, none);     // nothing
+    // Lower bounds, both combined, and equality on a prefix or on both levels.
+    expect_bounded(none, LL(2, 3), none);
+    expect_bounded(none, LL(3), none);
+    expect_bounded(LL(2, 4), LL(2, 1), none);
+    expect_bounded(none, none, LL(2));
+    expect_bounded(none, none, LL(2, 3));
+    EXPECT_EQ(F(S(2, 4)), compile_family(kTwoLevelText, bound_options(none, none, LL(1, 2))));
+    // A relative entry is the optimum of its level (1, 2) plus the value; the optimum is reported.
+    CompileOptions rel = no_projection();
+    rel.cost_le = bounds_of(LL(0, 1), true);
+    CompileResult res = compile(p, rel);
+    EXPECT_EQ(LL(1, 2), res.optimum);
+    EXPECT_EQ(bounded_subsets(LL(1, 3), none, none), family_of(res));
+    EXPECT_EQ(F(S(2), S(2, 4)), family_of(res));
+    rel.cost_le.clear();
+    rel.cost_ge = bounds_of(LL(1), true);
+    EXPECT_EQ(bounded_subsets(none, LL(2), none), family_of(compile(p, rel)));
+    rel.cost_ge.clear();
+    rel.cost_eq = bounds_of(LL(0, 0), true);  // the optimal answer sets, as optimize finds them
+    CompileOptions opt = no_projection();
+    opt.optimize = true;
+    EXPECT_EQ(family_of(compile(p, opt)), family_of(compile(p, rel)));
+    rel.cost_eq.clear();
+    rel.cost_le.push_back(CostBound(2, false));  // absolute and relative entries mix
+    rel.cost_le.push_back(CostBound(1, true));
+    EXPECT_EQ(bounded_subsets(LL(2, 3), none, none), family_of(compile(p, rel)));
+    // An inconsistent program has no optimum; the result is empty.
+    Program unsat = read_aspif_string(std::string(kTwoLevelText).replace(10, 0, "1 0 0 0 0\n"));
+    res = compile(unsat, rel);
+    EXPECT_TRUE(family_of(res).empty());
+    EXPECT_TRUE(res.optimum.empty());
+}
+
+TEST(Compiler, CostBoundsRejectBadCombinations) {
+    Program p = read_aspif_string(kTwoLevelText);
+    CompileOptions o = no_projection();
+    o.cost_le = bounds_of(LL(2), false);
+    o.optimize = true;
+    EXPECT_THROW(compile(p, o), std::invalid_argument);  // optimize and a bound
+    o.optimize = false;
+    o.cost_eq = bounds_of(LL(2), false);
+    EXPECT_THROW(compile(p, o), std::invalid_argument);  // cost_eq with cost_le
+    o.cost_le.clear();
+    o.cost_ge = bounds_of(LL(2), false);
+    EXPECT_THROW(compile(p, o), std::invalid_argument);  // cost_eq with cost_ge
+    o.cost_ge.clear();
+    o.cost_eq.push_back(CostBound(0, false));
+    o.cost_eq.push_back(CostBound(0, false));
+    EXPECT_THROW(compile(p, o), std::invalid_argument);  // three entries, two levels
+    o.cost_eq.clear();
+    o.cost_le = bounds_of(LL(5), false);
+    Program no_minimize = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n0\n");
+    EXPECT_THROW(compile(no_minimize, o), std::invalid_argument);  // no #minimize statement
+    EXPECT_EQ(2u, family_of(compile(no_minimize, no_projection())).size());
+}

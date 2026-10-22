@@ -4,6 +4,7 @@
 #include <cctype>
 #include <chrono>
 #include <functional>
+#include <limits>
 #include <queue>
 #include <set>
 #include <stdexcept>
@@ -576,12 +577,16 @@ public:
         note_peak(st);
 
         res.costs = build_costs();
-        if (options_.optimize && !family.is_zero()) {
-            for (size_t c = 0; c < res.costs.size(); ++c) {
-                std::vector<int> w = int_weights(res.costs[c].var_weights);
-                long long best = family.min_weight(w);
-                family = family.cost_bound_le(w, best);
-                res.optimum.push_back(best + res.costs[c].offset);
+        if (!family.is_zero()) {
+            if (options_.optimize) {
+                for (size_t c = 0; c < res.costs.size(); ++c) {
+                    std::vector<int> w = int_weights(res.costs[c].var_weights);
+                    long long best = family.min_weight(w);
+                    family = family.cost_bound_le(w, best);
+                    res.optimum.push_back(best + res.costs[c].offset);
+                }
+            } else if (!options_.cost_le.empty() || !options_.cost_ge.empty() || !options_.cost_eq.empty()) {
+                family = apply_cost_bounds(family, res);
             }
         }
         st.optimize_time = t.lap();
@@ -954,6 +959,79 @@ private:
         return costs;
     }
 
+    /** Does any entry of the bound refer to the optimum? */
+    static bool has_relative(const std::vector<CostBound>& b) {
+        for (size_t i = 0; i < b.size(); ++i) {
+            if (b[i].relative) return true;
+        }
+        return false;
+    }
+
+    /** A bound vector in KyotoDD weight space: value (+ the optimum of the level) - offset. */
+    static std::vector<long long> resolve_bounds(const std::vector<CostBound>& bounds, const CompileResult& res) {
+        std::vector<long long> b(bounds.size());
+        for (size_t c = 0; c < bounds.size(); ++c) {
+            long long v = bounds[c].value;
+            if (bounds[c].relative) v += res.optimum[c];  // res.optimum includes the offset
+            b[c] = v - res.costs[c].offset;
+        }
+        return b;
+    }
+
+    /**
+     * The sets of @p family whose cost vector over the first b.size() levels is
+     * lexicographically <= b (@p le) or >= b (!le): a level decides unless the
+     * cost equals the bound there, in which case the next level is consulted;
+     * the levels beyond the bound vector are free.
+     */
+    static ZDD lex_bound(const ZDD& family, const std::vector<std::vector<int> >& w, const std::vector<long long>& b,
+                         bool le) {
+        const long long kMin = std::numeric_limits<long long>::min(), kMax = std::numeric_limits<long long>::max();
+        ZDD acc = family;
+        for (size_t c = b.size(); c-- > 0;) {
+            ZDD within, strict;  // cost <= / >= b[c], and cost < / > b[c]
+            if (le) {
+                kyotodd::CostBoundMemo memo;
+                within = family.cost_bound_le(w[c], b[c], memo);
+                strict = b[c] == kMin ? ZDD(0) : family.cost_bound_le(w[c], b[c] - 1, memo);
+            } else {
+                within = family.cost_bound_ge(w[c], b[c]);
+                strict = b[c] == kMax ? ZDD(0) : family.cost_bound_ge(w[c], b[c] + 1);
+            }
+            acc = strict + ((within - strict) & acc);
+        }
+        return acc;
+    }
+
+    /** The sets of @p family whose cost equals b on every level b lists. */
+    static ZDD lex_equal(const ZDD& family, const std::vector<std::vector<int> >& w, const std::vector<long long>& b) {
+        ZDD acc = family;
+        for (size_t c = 0; c < b.size(); ++c) acc = acc.cost_bound_eq(w[c], b[c]);
+        return acc;
+    }
+
+    /**
+     * Restrict @p family to the cost bounds of the options. A relative bound needs
+     * the optimum, which is computed as optimize does and reported in res.optimum.
+     */
+    ZDD apply_cost_bounds(ZDD family, CompileResult& res) const {
+        const CompileOptions& o = options_;
+        std::vector<std::vector<int> > w;
+        for (size_t c = 0; c < res.costs.size(); ++c) w.push_back(int_weights(res.costs[c].var_weights));
+        if (has_relative(o.cost_le) || has_relative(o.cost_ge) || has_relative(o.cost_eq)) {
+            ZDD best = family;
+            for (size_t c = 0; c < res.costs.size(); ++c) {
+                long long m = best.min_weight(w[c]);
+                best = best.cost_bound_le(w[c], m);
+                res.optimum.push_back(m + res.costs[c].offset);
+            }
+        }
+        if (!o.cost_eq.empty()) return lex_equal(family, w, resolve_bounds(o.cost_eq, res));
+        if (!o.cost_le.empty()) family = lex_bound(family, w, resolve_bounds(o.cost_le, res), true);
+        if (!o.cost_ge.empty()) family = lex_bound(family, w, resolve_bounds(o.cost_ge, res), false);
+        return family;
+    }
+
     static std::vector<int> int_weights(const std::vector<long long>& w) {
         std::vector<int> r(w.size());
         for (size_t i = 0; i < w.size(); ++i) {
@@ -1016,8 +1094,30 @@ void apply_project_statements(const Program& prog, const std::vector<Atom>& atom
     res.terms = kept;
 }
 
+/** Reject cost bounds that cannot be applied (see CompileOptions::cost_le). */
+void validate_cost_bounds(const Program& program, const CompileOptions& o) {
+    size_t n = std::max(o.cost_le.size(), std::max(o.cost_ge.size(), o.cost_eq.size()));
+    if (n == 0) return;
+    if (o.optimize) {
+        throw std::invalid_argument("optimize (--opt) cannot be combined with a cost bound (cost_le/cost_ge/cost_eq)");
+    }
+    if (!o.cost_eq.empty() && (!o.cost_le.empty() || !o.cost_ge.empty())) {
+        throw std::invalid_argument("cost_eq (--cost-eq) cannot be combined with cost_le or cost_ge (--cost-le/--cost-ge)");
+    }
+    std::set<int> priorities;
+    for (size_t m = 0; m < program.minimizes().size(); ++m) priorities.insert(program.minimizes()[m].priority);
+    if (priorities.empty()) {
+        throw std::invalid_argument("a cost bound needs a #minimize statement, but the program has none");
+    }
+    if (n > priorities.size()) {
+        throw std::invalid_argument("the cost bound has " + std::to_string(n) + " entries, but the program has only " +
+                                    std::to_string(priorities.size()) + " #minimize priority level(s)");
+    }
+}
+
 CompileResult compile_with(const Program& program, const CompileOptions& options,
                            const std::vector<LoadedTarget>* loaded) {
+    validate_cost_bounds(program, options);
     CompileResult res;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     std::set<Atom> shown = collect_names(program, res);
