@@ -8,9 +8,12 @@ Supported: normal, choice, constraint and disjunctive rules (including non
 head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection
 (including `#show t : not a.` style terms), `#minimize` (optimal answer sets
 only, or cost functions), `#external` atoms (kept as free variables unless a
-rule defines them, as in clingo; their initial value is ignored). `#project`
-is read but ignored; `#heuristic`, assumptions, edges and theory atoms are
-ignored with a warning.
+rule defines them, as in clingo; `--external-values` fixes them to their
+declared initial value instead), assumptions (aspif `6` statements, kept as
+constraints), `#project` (with `--project`, like clingo). Brave and cautious
+consequences and the number of answer sets displaying each name are read off
+the diagram (`--brave`, `--cautious`, `--frequencies`). `#heuristic`, edges
+and theory atoms are ignored with a warning.
 
 **New to ASP or DDASP?** Read the beginner's guide (Japanese):
 [docs/GUIDE_ja.md](docs/GUIDE_ja.md) — 初心者向け利用ガイド(ASP の基本文法から ZDD の活用まで)。
@@ -46,19 +49,25 @@ G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp --gringo "$G" examples/queens.lp                  # answer sets: 4
 ./build/ddasp --gringo "$G" --enumerate examples/coloring.lp
 ./build/ddasp --gringo "$G" --opt --stats prog.lp
+./build/ddasp --gringo "$G" --brave --cautious --frequencies examples/queens.lp
+./build/ddasp --gringo "$G" --node-max 50000000 prog.lp           # fail instead of swapping
 ./build/ddasp --gringo "$G" -o out.zdd --atoms atoms.txt prog.lp
 ./build/ddasp prog.aspif                                        # already ground
 ./build/ddasp --gringo "$G" --save coloring.ddasp examples/coloring.lp
 ./build/ddasp --gringo "$G" --load coloring.ddasp --enumerate examples/coloring_fix.lp
 ```
 
-Options: `--enumerate [--limit N]` (streamed; `0` = all), `-o FILE` (KyotoDD
-binary; `--bdd` for the BDD), `--atoms FILE` (variable / level / atom / name
-table plus the `#minimize` cost functions by level), `--all-atoms` (no `#show`
-projection), `--opt` (`#minimize`), `--method scc|twocopy`,
-`--order name|id|FILE`, `--stats`. The summary lines `answer sets: N` and
-`optimum: ...` are printed by default; `-q` suppresses them and `-q --count`
-prints the bare count.
+Options: `--enumerate [--limit N]` (streamed; `0` = all), `--brave` /
+`--cautious` (the names displayed by some / every answer set, one line each,
+in the format of an answer set), `--frequencies` (`name count` per displayed
+name), `-o FILE` (KyotoDD binary; `--bdd` for the BDD), `--atoms FILE`
+(variable / level / atom / name table plus the `#minimize` cost functions by
+level), `--all-atoms` (no `#show` projection), `--project` (project onto the
+`#project` atoms instead of the shown atoms), `--opt` (`#minimize`),
+`--external-values`, `--method scc|twocopy`, `--order name|id|FILE`,
+`--node-max N` (bound KyotoDD's node table; unlimited by default), `--stats`.
+The summary lines `answer sets: N` and `optimum: ...` are printed by default;
+`-q` suppresses them and `-q --count` prints the bare count.
 
 The binary format records DD *levels*; the `--atoms` table lists the level of
 every atom. Importing the file in a fresh KyotoDD process gives variable
@@ -75,8 +84,9 @@ program must not define a stored atom (rule head or fact). See
 [docs/DESIGN.md](docs/DESIGN.md) for the format and the semantics.
 
 Limits: KyotoDD allows 65536 BDD variables (one per atom of the ground
-program, two for atoms in positive loops), and the node table is unbounded,
-so very large intermediate diagrams use all available memory.
+program, two for atoms in positive loops). The node table is unbounded unless
+`--node-max N` is given, so very large intermediate diagrams use all available
+memory; with the limit the run fails with a clear error instead.
 
 ## Python
 
@@ -86,7 +96,12 @@ res = ddasp.compile_text("{ a; b }. :- a, b. #show a/0. #show b/0.")
 res.count                     # 3
 list(res.answer_sets())       # frozensets of shown atom names
 res.zdd                       # kyotodd.ZDD (variables: level_to_atom / names)
+res.brave, res.cautious       # frozensets of names: shown by some / by every answer set
+res.frequencies               # {name: number of answer sets showing it}
 res = ddasp.compile_files(["prog.lp"], optimize=True); res.optimum
+res = ddasp.compile_files(["prog.lp"], project="project")      # #project atoms (--project)
+res = ddasp.compile_files(["prog.lp"], external_values=True)   # --external-values
+res = ddasp.compile_files(["prog.lp"], node_max=50_000_000)    # ddasp.NodeLimitError if exceeded
 res.save("prog.ddasp")        # stored DD (ZDD + names), also ddasp --save / --load
 more = ddasp.compile_text(":- a. q :- b. #show q/0.", dds=[ddasp.load("prog.ddasp")])
 dd = ddasp.StoredDD.from_zdd(zdd, {1: "a", 2: "b"})   # a family built with kyotodd, as a stored DD

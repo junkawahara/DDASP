@@ -553,18 +553,50 @@ ddasp [options] FILE...
 | `--count` | 解集合の個数だけを(`answer sets:` を付けずに)表示。`-q` と組み合わせて使う |
 | `--enumerate` | すべての解集合を 1 行ずつ表示(原子は変数順 = 名前順) |
 | `--limit N` | `--enumerate` で最大 N 個だけ表示(`0` = すべて)。ZDD から順に取り出すので大きな族でも軽い |
+| `--brave` | **勇敢帰結**: どれかの解集合に現れる名前を 1 行に表示(解集合と同じ形式) |
+| `--cautious` | **慎重帰結**: すべての解集合に現れる名前を 1 行に表示(解が無ければ空行) |
+| `--frequencies` | 表示される名前ごとに `名前 個数`(その名前を含む解集合の個数)を 1 行ずつ表示 |
 | `-o FILE` | ZDD を KyotoDD バイナリ形式で FILE に保存 |
 | `--bdd` | `-o` で ZDD の代わりに BDD を保存 |
 | `--atoms FILE` | 変数番号 / レベル / 原子番号 / 原子名の対応表と、`#minimize` のコスト関数(`レベル:重み`)を FILE に保存 |
 | `--save FILE` | 解集合の族を **保存 DD**(ZDD + 原子名 + 事実名の 1 ファイル)として FILE に保存。後の実行で `--load` する |
 | `--load FILE` | 保存 DD を読み込み、その原子を新しいプログラムの `#external` 原子として使えるようにし、解集合をその族に制限する(複数回指定可) |
 | `--all-atoms` | `#show` による射影をせず、すべての原子を DD の変数にする |
+| `--project` | `#project` 文があれば、表示原子の代わりに `#project` の原子へ射影する(clingo の `--project` 相当。名前のない原子は `__atomN` と表示) |
 | `--opt` | `#minimize` の最適解だけを残す |
+| `--external-values` | `#external` 原子を宣言の初期値(`#external a. [true]` など。無印の `#external a.` は false)に固定する。既定では初期値を無視して自由にする |
 | `--method scc\|twocopy` | 安定モデルの構成法(既定 `scc`、`twocopy` は参照実装) |
 | `--order name\|id\|FILE` | 変数順序(既定 `name`。FILE は上から順に並べる原子名(名前のない原子は `__atomN`)の一覧) |
 | `--gringo CMD` | グラウンダのコマンド(`CMD --output=intermediate FILE...` として実行) |
+| `--node-max N` | KyotoDD のノード表を N ノードまでに制限する。超えるとメモリを使い切る代わりに明確なエラーで終了(既定は無制限) |
 | `--stats` | ノード数と所要時間を標準エラー出力に表示 |
 | `-q`, `--quiet` | `answer sets: N` と `optimum: ...` の行を表示しない |
+
+### 解全体の性質を調べる(`--brave` / `--cautious` / `--frequencies`)
+
+解集合の族が ZDD として手元にあるので、「どれかの解に入る原子」(勇敢帰結)、「すべての解に
+入る原子」(慎重帰結)、「各原子が何個の解に入るか」は、解を列挙せずに正確に求まります。
+6 クイーンでは、角のマス `q(1,1)` などはどの解にも使われず、`q(1,2)` は 4 解中 1 解に現れます。
+
+```sh
+./build/ddasp --gringo "$G" --cautious --frequencies examples/queens.lp
+```
+
+```
+answer sets: 4
+
+q(1,1) 0
+q(1,2) 1
+q(1,3) 1
+...
+```
+
+2 行目の空行が `--cautious` の出力です(すべての解に共通する原子は無い)。
+
+`--brave` と `--cautious` の行は `--enumerate` の 1 行と同じ形式(事実名、原子名、`#show` の項を
+変数順に並べたもの)なので、そのまま別のプログラムの入力にできます。`--frequencies` の個数は
+射影後の解集合に対するものです(`--all-atoms` なら全解集合)。`-q` を付けても表示されます。
+Python では `res.brave`、`res.cautious`、`res.frequencies` で同じものが得られます(10 章)。
 
 ### ZDD をファイルに保存する
 
@@ -687,11 +719,26 @@ res.count, res.optimum        # (1, [1])
 | `clingo_args=["--const", "n=8"]` | clingo に渡す引数(定数の上書きなど) |
 | `method="scc"` | `"scc"`(既定)または `"twocopy"` |
 | `order="name"` | `"name"`、`"id"`、または上に置く原子番号のリスト |
-| `project=True` | `False` にすると `--all-atoms` 相当 |
+| `project=True` | `False` にすると `--all-atoms` 相当、`"project"` にすると `--project` 相当(`#project` の原子へ射影) |
 | `optimize=False` | `True` で `--opt` 相当 |
+| `external_values=False` | `True` で `--external-values` 相当(`#external` の初期値で固定) |
 | `dds=[...]` | `--load` 相当。読み込む保存 DD(`StoredDD`、`Result`、ファイルパス、bytes)のリスト |
+| `node_max=None` | `--node-max` 相当。ノード数の上限(超えると `ddasp.NodeLimitError`)。`None` で無制限 |
 
-`res.stats` にはノード数や時間の統計が入ります。
+`res.stats` にはノード数や時間の統計が入ります。勇敢帰結・慎重帰結・出現回数(9 章)は
+`Result` の属性です。
+
+```python
+res = ddasp.compile_files(["examples/queens.lp"])
+res.brave                     # frozenset({'q(1,2)', 'q(1,3)', ...})  どれかの解に入る原子
+res.cautious                  # frozenset()                          すべての解に入る原子
+res.frequencies               # {'q(1,1)': 0, 'q(1,2)': 1, ...}      原子ごとの解の個数(表示順)
+
+try:
+    big = ddasp.compile_files(["big.lp"], node_max=50_000_000)
+except ddasp.NodeLimitError:
+    ...                       # 変数順序や #show を見直す
+```
 
 保存 DD(9 章の `--save` / `--load`)は Python でも同じように使えます。
 
@@ -909,7 +956,9 @@ ZDD の大きさは **変数順序** に強く依存します。`--order FILE` �
 `peak table nodes` を見ながら試してください。また、`#show` で必要な原子だけを残すと
 ZDD は小さくなります。なお、グラウンディング後の原子数には上限があります
 (KyotoDD の BDD 変数は 65536 個まで。原子 1 つに変数 1 つ、正のループに入る原子は 2 つ)。
-また、ノード数の上限は設けていないので、巨大な中間 BDD はマシンのメモリを使い切ります。
+ノード数は既定では無制限で、巨大な中間 BDD はマシンのメモリを使い切ります。
+`--node-max N`(Python では `node_max=N`)を付けると、N ノードを超えた時点で明確なエラーで
+止まるので、まず上限付きで試すと安全です。
 
 **Q. 一度作った DD を別のプログラムから使いたい。**
 `--save FILE` で保存し、別のプログラムのコンパイル時に `--load FILE` を付けます
@@ -919,7 +968,9 @@ KyotoDD で直接作った ZDD も `StoredDD.from_zdd` で同じように使え�
 
 **Q. `#count` / `#sum` / 選言ルール(`a | b :- ...`)は使えますか?**
 はい。通常ルール、選択ルール、制約、選言ルール、`#count` / `#sum` を含む本体、
-`#show`、`#minimize`、`#external` に対応しています。
+`#show`、`#minimize`、`#external`(初期値は `--external-values` を付けたときだけ使う)、
+`#project`(`--project` を付けたときだけ使う)、assumption(aspif の 6 文、常に制約として使う)に
+対応しています。`#heuristic`、edge、theory は警告を出して無視します。
 
 **Q. 仕組みをもっと知りたい。**
 [docs/DESIGN.md](DESIGN.md) に、安定モデル意味論を BDD で構成する方法

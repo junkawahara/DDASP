@@ -37,11 +37,20 @@ release; `u_a` plays the role of `a ∈ X \ Y`.)
   programming over the literal list (`threshold_bdd`), processing the
   literals from the top level down.
 - `#external a` is treated as the choice rule `{a}.`; its initial value
-  (true/false/free/release) is ignored, the atom is always free. When a rule
-  has `a` in the head, the declaration is ignored (as in clingo, where such an
-  atom is no longer external): `#external e. {a}. e :- a.` has the answer sets
-  `{}` and `{a, e}` only.
-- `#project` statements are read but ignored.
+  (true/false/free/release) is ignored by default, the atom is always free.
+  With `CompileOptions::external_values` (`--external-values`) a free
+  external declared true or false is fixed to that value by a unit
+  constraint (the last declaration of an atom wins; gringo declares a plain
+  `#external a.` as false, `[true]`/`[false]` as written; free and released
+  atoms stay free). When a rule has `a` in the head, the declaration is
+  ignored (as in clingo, where such an atom is no longer external):
+  `#external e. {a}. e :- a.` has the answer sets `{}` and `{a, e}` only.
+- Assumptions (aspif `6` statements, `Observer.assume`) are unit integrity
+  constraints: every answer set satisfies each assumed literal. An assumed
+  atom of no rule is false, so assuming it leaves no answer set. They are
+  conjoined before every other constraint (`Part::first`), like loaded DDs.
+- `#project` statements are read and used only with
+  `CompileOptions::use_project_statements` (`--project`), see below.
 
 ## Stable model semantics: SCC-local unfounded sets (default, `--method scc`)
 
@@ -119,6 +128,37 @@ so answer sets that differ only in hidden atoms collapse, and the terms can
 still be evaluated on the projected sets. `CompileResult::shown_names()`
 produces the printed names of one answer set (deduplicated, like clingo's
 symbol set). `--all-atoms` keeps every atom as a DD variable.
+
+With `use_project_statements` (`--project`, Python `project="project"`) and a
+program that has `#project` statements, the shown atoms are replaced by the
+`#project` atoms (those with a DD variable; the others are false): they are
+the variables of the result, named by their primary `#show` name or
+`__atom<id>` (entered into `names` so that they are displayed), the fact
+names stay, and a term whose condition mentions an atom outside the
+projection (other than a constant atom of no rule) is dropped with a message
+in `CompileResult::warnings`. This is the family clingo's `--project`
+enumerates one representative of. Without `#project` statements the option
+changes nothing; it cannot be combined with `--all-atoms`.
+
+## Consequences and frequencies (`include/ddasp/consequences.h`)
+
+`name_frequencies` gives, for every displayed name in display order (fact
+names, atom names in variable order, terms), the number of answer sets of
+the result that display it. `zdd_variable_counts` (`dd_util`) computes the
+count of every variable in one iterative pass over the ZDD: the nodes are
+collected top-down (memoized by node id, which includes KyotoDD's complement
+flag), each node gets the number of sets below it and the number of paths
+from the root, and a variable's count is the sum over its nodes of
+paths × sets below the 1-child. A name shown by one single-literal output
+is read off these counts (`not a`: total − count of a); a name shown by
+several outputs or by a compound condition is counted on the family
+restricted with `onset`/`change`/`offset` and united over its outputs, so
+`#show t : a. #show t : b.` counts the sets containing a or b. Fact names
+count every answer set. The brave consequences are the names with a positive
+count, the cautious consequences those whose count equals the number of
+answer sets (none for an inconsistent program). The counts refer to the
+projected family (`--all-atoms` for all answer sets). The Python binding
+computes them with every compilation (`Result.frequencies/brave/cautious`).
 
 ## #minimize
 
@@ -218,9 +258,12 @@ linear; any other order is still correct, only slower.
   loaded DDs count too.
 - KyotoDD refuses to import diagrams with more than 10^7 nodes or 10^6
   levels, so such a family can be saved but not loaded.
-- There is no node limit: `bddinit` is called with an unbounded table, so a
-  huge intermediate BDD (e.g. a `#count` over 60000 atoms with a bound of
-  30000, O(n·k) nodes) uses all the memory of the machine.
+- The node table is unbounded by default, so a huge intermediate BDD (e.g. a
+  `#count` over 60000 atoms with a bound of 30000, O(n·k) nodes) uses all the
+  memory of the machine. `--node-max N` (Python `node_max=N`) passes the
+  limit to `bddinit`; KyotoDD then throws "node table exhausted", which the
+  CLI reports as the limit being reached and Python raises as
+  `ddasp.NodeLimitError` (the instance is reset for the next compilation).
 
 ## Decisions log
 
@@ -252,3 +295,9 @@ linear; any other order is still correct, only slower.
 - 2026-10-22: constraints are conjoined definitions first (dependency order across SCCs,
   lowest top level among the ready ones); fixes the blow-up of value-rich aggregates
   (`#count` into a derived atom) over many shown or stored atoms.
+- 2026-10-22: assumptions are constraints (always); `#external` initial values are used
+  only with `--external-values` (gringo declares a plain `#external a.` as false);
+  `#project` only with `--project`, which replaces the shown atoms by the `#project`
+  atoms (unnamed ones displayed as `__atomN`, terms leaving the projection dropped with
+  a warning); brave/cautious consequences and per-name frequencies are read off the ZDD
+  and printed as bare lines; `--node-max` bounds the node table, unlimited by default.
