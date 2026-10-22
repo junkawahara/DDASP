@@ -171,6 +171,11 @@ TEST(AspifReader, Errors) {
     EXPECT_THROW(read_aspif_string("asp 1 0 0\n42 1\n0\n"), AspifError);           // unknown statement
     EXPECT_THROW(read_aspif_string("asp 1 0 0\n1 0 0 1 99999999999999999999 0\n0\n"), AspifError);  // bound overflow
     EXPECT_THROW(read_aspif_string("asp 1 0 0\n1 0 1 99999999999 0 0\n0\n"), AspifError);  // atom beyond int32
+    // Huge counts are rejected as short lines, not by allocating for them.
+    EXPECT_THROW(read_aspif_string("asp 1 0 0\n1 0 1 1 0 99999999999\n0\n"), AspifError);      // body size
+    EXPECT_THROW(read_aspif_string("asp 1 0 0\n1 0 99999999999 1\n0\n"), AspifError);          // head size
+    EXPECT_THROW(read_aspif_string("asp 1 0 0\n1 0 1 1 1 0 99999999999 1 1\n0\n"), AspifError);  // weight body size
+    EXPECT_THROW(read_aspif_string("asp 1 0 0\n4 99999999999 a 0\n0\n"), AspifError);          // output length
     try {
         read_aspif_string("asp 1 0 0\n1 0 0 0\n0\n");
         FAIL() << "expected AspifError";

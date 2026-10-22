@@ -1,5 +1,6 @@
 #include "ddasp/aspif_reader.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <fstream>
@@ -61,6 +62,9 @@ public:
         if (!at_end()) throw AspifError("unexpected trailing tokens", line_no_);
     }
 
+    /** An upper bound on the number of tokens left on the line (to size vectors without trusting a count). */
+    size_t remaining() const { return pos_ < line_.size() ? line_.size() - pos_ : 0; }
+
 private:
     void skip_spaces() {
         while (pos_ < line_.size() && (line_[pos_] == ' ' || line_[pos_] == '\t' || line_[pos_] == '\r')) ++pos_;
@@ -86,7 +90,7 @@ Literal read_literal(LineTokens& t, int line_no, const char* what) {
 std::vector<Literal> read_literals(LineTokens& t, int line_no, const char* what) {
     size_t n = t.next_count(what);
     std::vector<Literal> lits;
-    lits.reserve(n);
+    lits.reserve(std::min(n, t.remaining()));  // a huge count must fail as a short line, not as bad_alloc
     for (size_t i = 0; i < n; ++i) lits.push_back(read_literal(t, line_no, what));
     return lits;
 }
@@ -94,7 +98,7 @@ std::vector<Literal> read_literals(LineTokens& t, int line_no, const char* what)
 std::vector<WeightedLiteral> read_weighted_literals(LineTokens& t, int line_no, const char* what) {
     size_t n = t.next_count(what);
     std::vector<WeightedLiteral> lits;
-    lits.reserve(n);
+    lits.reserve(std::min(n, t.remaining()));
     for (size_t i = 0; i < n; ++i) {
         Literal l = read_literal(t, line_no, what);
         long long w = t.next_int(what);
@@ -108,7 +112,7 @@ void read_rule(LineTokens& t, int line_no, Program& prog) {
     if (head_kind != 0 && head_kind != 1) throw AspifError("unknown head type", line_no);
     size_t m = t.next_count("head size");
     std::vector<Atom> head;
-    head.reserve(m);
+    head.reserve(std::min(m, t.remaining()));
     for (size_t i = 0; i < m; ++i) head.push_back(read_atom(t, line_no, "head"));
 
     int body_kind = t.next_int32("body type");
