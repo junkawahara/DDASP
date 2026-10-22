@@ -95,7 +95,8 @@ struct LoadedDD {
  * The diagram lands on the variables currently at levels 1..N (N = number of
  * atoms); variables are created when fewer exist. The variable numbers are
  * recorded in @c vars, so the result stays valid when variables are added later.
- * @throws std::runtime_error when the payload is not a valid KyotoDD ZDD of at most N levels.
+ * @throws std::runtime_error when the payload is not a valid KyotoDD ZDD of at most N levels;
+ *         KyotoDD's std::overflow_error ("node table exhausted") passes through unchanged.
  */
 LoadedDD import_stored_dd(const StoredDDData& dd);
 

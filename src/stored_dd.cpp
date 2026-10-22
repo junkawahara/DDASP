@@ -229,6 +229,8 @@ LoadedDD import_stored_dd(const StoredDDData& dd) {
         std::istringstream is(dd.payload);
         try {
             out.zdd = ZDD::import_binary(is);
+        } catch (const std::overflow_error&) {
+            throw;  // the node table limit (bddinit's node_max), not a malformed file
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string("stored DD: cannot import the diagram: ") + e.what());
         }
