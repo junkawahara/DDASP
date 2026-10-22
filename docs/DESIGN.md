@@ -199,6 +199,19 @@ This costs a few `cost_bound` passes and one projection per distinct vector
 but needs no per-node cost tables (a node-wise convolution would take
 nodes × distinct vectors memory and could not count projected sets).
 
+Cost-ordered enumeration (`--by-cost`, `enumerate_by_cost` in
+`include/ddasp/cost_order.h`, Python `answer_sets(by_cost=True)` and
+`compile(best=K)`) visits the projected answer sets best first with the same
+reading: once each, at the smallest cost vector of their answer sets. With one
+priority level and no weighted atom hidden by projection it runs KyotoDD's
+`ZddMinWeightIterator` (Yen's k-best algorithm) on the result's ZDD; otherwise
+it peels the family before projection like the histogram, enumerating the
+projected sets of each cost class that were not seen before. `CompileResult`
+keeps the unprojected family (`family`) for this. The Python generator works on
+the imported, projected ZDD with kyotodd's `iter_min_weight` / `cost_bound_le`,
+so it needs every weighted atom to be a variable of the result; `compile(best=K)`
+collects the K best in C++ instead, hidden weights included.
+
 ## Conversions and deep diagrams
 
 KyotoDD's `BDD::to_zdd` / `ZDD::to_bdd` work on levels, and the binary export
@@ -337,3 +350,7 @@ linear; any other order is still correct, only slower.
   vectors (not per-level marginals); projected sets counted once at their smallest cost
   (consistent with the bounds and `answer sets:`); bare `K[,K..] count` lines without
   zero counts; Python dict with tuple keys in ascending order, `None` unless requested.
+- 2026-10-22: cost-ordered enumeration uses both methods (KyotoDD's k-best iterator when
+  it applies, peeling otherwise); lines are `K[,K..]: atoms`; `--by-cost` implies
+  `--enumerate`; Python offers the lazy `answer_sets(by_cost=True)` (weighted atoms must
+  be shown) and `compile(best=K)` (computed in C++, hidden weights fine).

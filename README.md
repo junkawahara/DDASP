@@ -51,6 +51,7 @@ G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp --gringo "$G" --opt --stats prog.lp
 ./build/ddasp --gringo "$G" --cost-le +1 --enumerate examples/vertex_cover.lp  # optimum + 1
 ./build/ddasp --gringo "$G" --cost-histogram examples/vertex_cover.lp  # 4 8 / 5 6 / 6 1
+./build/ddasp --gringo "$G" --by-cost --limit 3 examples/vertex_cover.lp  # the 3 best: `4: in(2) ...`
 ./build/ddasp --gringo "$G" --brave --cautious --frequencies examples/queens.lp
 ./build/ddasp --gringo "$G" --node-max 50000000 prog.lp           # fail instead of swapping
 ./build/ddasp --gringo "$G" -o out.zdd --atoms atoms.txt prog.lp
@@ -59,7 +60,9 @@ G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp --gringo "$G" --load coloring.ddasp --enumerate examples/coloring_fix.lp
 ```
 
-Options: `--enumerate [--limit N]` (streamed; `0` = all), `--brave` /
+Options: `--enumerate [--limit N]` (streamed; `0` = all), `--by-cost` (the
+answer sets in ascending `#minimize` cost order as `K[,K...]: atoms` lines,
+best first; implies `--enumerate`, `--limit N` gives the N best), `--brave` /
 `--cautious` (the names displayed by some / every answer set, one line each,
 in the format of an answer set), `--frequencies` (`name count` per displayed
 name), `-o FILE` (KyotoDD binary; `--bdd` for the BDD), `--atoms FILE`
@@ -111,6 +114,8 @@ res = ddasp.compile_files(["prog.lp"], optimize=True); res.optimum
 res = ddasp.compile_files(["prog.lp"], cost_slack=1)          # cost <= optimum + 1 (--cost-le +1);
                                                                # also cost_le= / cost_ge= / cost_eq=
 res = ddasp.compile_files(["prog.lp"], cost_histogram=True); res.cost_histogram  # {(4,): 8, (5,): 6, ...}
+res.answer_sets(by_cost=True)   # (cost tuple, frozenset) pairs, best first (weighted atoms must be shown)
+ddasp.compile_files(["prog.lp"], best=3).best                 # the 3 best as (cost, frozenset), hidden weights ok
 res = ddasp.compile_files(["prog.lp"], project="project")      # #project atoms (--project)
 res = ddasp.compile_files(["prog.lp"], external_values=True)   # --external-values
 res = ddasp.compile_files(["prog.lp"], node_max=50_000_000)    # ddasp.NodeLimitError if exceeded
