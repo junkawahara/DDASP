@@ -592,15 +592,20 @@ public:
         st.optimize_time = t.lap();
 
         res.vars = x_vars_;
+        std::vector<bddvar> hidden;
         if (options_.project_to_shown) {
-            std::vector<bddvar> hidden, shown;
+            std::vector<bddvar> shown;
             for (size_t i = 0; i < order_.size(); ++i) {
                 Atom a = order_[i];
                 (shown_.count(a) ? shown : hidden).push_back(atom_to_var_[a]);
             }
-            if (!hidden.empty()) family = family.project(hidden);
             res.vars = shown;
         }
+        if (options_.cost_histogram) {
+            res.cost_histogram = build_cost_histogram(family, hidden, res);
+            st.histogram_time = t.lap();
+        }
+        if (!hidden.empty()) family = family.project(hidden);
         res.zdd = family;
         res.bdd = zdd_to_bdd_over(family, res.vars);
         st.project_time = t.lap();
@@ -1032,6 +1037,39 @@ private:
         return family;
     }
 
+    /**
+     * The cost histogram of @p family (see CostCount): the distinct cost vectors
+     * are visited from the smallest up, each time taking the lexicographically
+     * optimal sets of what is left (as optimize finds them), projecting them
+     * and adding them to the projected sets seen so far; the growth of that
+     * union is the count of the vector.
+     */
+    std::vector<CostCount> build_cost_histogram(const ZDD& family, const std::vector<bddvar>& hidden,
+                                                const CompileResult& res) const {
+        std::vector<CostCount> hist;
+        std::vector<std::vector<int> > w;
+        for (size_t c = 0; c < res.costs.size(); ++c) w.push_back(int_weights(res.costs[c].var_weights));
+        ZDD rest = family;
+        ZDD seen(0);
+        bigint::BigInt seen_count;
+        while (!rest.is_zero()) {
+            CostCount entry;
+            ZDD best = rest;
+            for (size_t c = 0; c < w.size(); ++c) {
+                long long m = best.min_weight(w[c]);
+                best = best.cost_bound_le(w[c], m);
+                entry.cost.push_back(m + res.costs[c].offset);
+            }
+            seen = seen + (hidden.empty() ? best : best.project(hidden));
+            bigint::BigInt total = seen.exact_count();
+            entry.count = total - seen_count;
+            if (!entry.count.is_zero()) hist.push_back(entry);
+            seen_count = total;
+            rest = rest - best;
+        }
+        return hist;
+    }
+
     static std::vector<int> int_weights(const std::vector<long long>& w) {
         std::vector<int> r(w.size());
         for (size_t i = 0; i < w.size(); ++i) {
@@ -1094,20 +1132,24 @@ void apply_project_statements(const Program& prog, const std::vector<Atom>& atom
     res.terms = kept;
 }
 
-/** Reject cost bounds that cannot be applied (see CompileOptions::cost_le). */
-void validate_cost_bounds(const Program& program, const CompileOptions& o) {
+/** Reject cost options that cannot be applied (see CompileOptions::cost_le and cost_histogram). */
+void validate_cost_options(const Program& program, const CompileOptions& o) {
     size_t n = std::max(o.cost_le.size(), std::max(o.cost_ge.size(), o.cost_eq.size()));
-    if (n == 0) return;
-    if (o.optimize) {
-        throw std::invalid_argument("optimize (--opt) cannot be combined with a cost bound (cost_le/cost_ge/cost_eq)");
-    }
-    if (!o.cost_eq.empty() && (!o.cost_le.empty() || !o.cost_ge.empty())) {
-        throw std::invalid_argument("cost_eq (--cost-eq) cannot be combined with cost_le or cost_ge (--cost-le/--cost-ge)");
+    if (n == 0 && !o.cost_histogram) return;
+    if (n != 0) {
+        if (o.optimize) {
+            throw std::invalid_argument("optimize (--opt) cannot be combined with a cost bound (cost_le/cost_ge/cost_eq)");
+        }
+        if (!o.cost_eq.empty() && (!o.cost_le.empty() || !o.cost_ge.empty())) {
+            throw std::invalid_argument(
+                "cost_eq (--cost-eq) cannot be combined with cost_le or cost_ge (--cost-le/--cost-ge)");
+        }
     }
     std::set<int> priorities;
     for (size_t m = 0; m < program.minimizes().size(); ++m) priorities.insert(program.minimizes()[m].priority);
     if (priorities.empty()) {
-        throw std::invalid_argument("a cost bound needs a #minimize statement, but the program has none");
+        throw std::invalid_argument(std::string(n != 0 ? "a cost bound" : "the cost histogram (--cost-histogram)") +
+                                    " needs a #minimize statement, but the program has none");
     }
     if (n > priorities.size()) {
         throw std::invalid_argument("the cost bound has " + std::to_string(n) + " entries, but the program has only " +
@@ -1117,7 +1159,7 @@ void validate_cost_bounds(const Program& program, const CompileOptions& o) {
 
 CompileResult compile_with(const Program& program, const CompileOptions& options,
                            const std::vector<LoadedTarget>* loaded) {
-    validate_cost_bounds(program, options);
+    validate_cost_options(program, options);
     CompileResult res;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     std::set<Atom> shown = collect_names(program, res);

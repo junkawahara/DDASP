@@ -108,6 +108,12 @@ struct CompileOptions {
     std::vector<CostBound> cost_ge;
     std::vector<CostBound> cost_eq;
     /**
+     * Compute CompileResult::cost_histogram: the number of answer sets per
+     * #minimize cost vector (requires a #minimize statement). The histogram
+     * describes the result, i.e. the family after optimize / the cost bounds.
+     */
+    bool cost_histogram;
+    /**
      * Atom order for the DD variables, listed from the top of the diagram down.
      * Atoms of the program missing from the list are appended below the listed
      * ones in the order given by @c order_heuristic.
@@ -116,7 +122,7 @@ struct CompileOptions {
 
     CompileOptions()
         : method(Method::Scc), order_heuristic(OrderHeuristic::NaturalName), project_to_shown(true),
-          use_project_statements(false), optimize(false), external_values(false) {}
+          use_project_statements(false), optimize(false), external_values(false), cost_histogram(false) {}
 };
 
 /**
@@ -134,6 +140,19 @@ struct CostFunction {
     CostFunction() : priority(0), offset(0) {}
 };
 
+/**
+ * @brief One entry of the cost histogram: a cost vector (one cost per priority
+ * level, most important first) and the number of answer sets of the result
+ * whose cost it is. With projection, every projected set counts once, at the
+ * lexicographically smallest cost vector of the answer sets projecting to it
+ * (the same reading of costs as the cost bounds), so the counts add up to the
+ * number of answer sets of the result.
+ */
+struct CostCount {
+    std::vector<long long> cost;
+    bigint::BigInt count;
+};
+
 /** @brief Timing and size statistics of a compilation (seconds / node counts). */
 struct CompileStats {
     double order_time;       ///< choosing the variable order
@@ -143,6 +162,7 @@ struct CompileStats {
     double unfounded_time;   ///< building and quantifying the unfounded-set conditions
     double convert_time;     ///< BDD -> ZDD conversion
     double optimize_time;    ///< #minimize filtering
+    double histogram_time;   ///< cost histogram (CompileOptions::cost_histogram)
     double project_time;     ///< #show projection and the final ZDD -> BDD conversion
     uint64_t models_nodes;   ///< size of Models(X) (∧ Supported(X) for the Scc method)
     uint64_t stable_nodes;   ///< size of the stable-model BDD over all atoms
@@ -157,7 +177,7 @@ struct CompileStats {
 
     CompileStats()
         : order_time(0), models_time(0), supported_time(0), conjoin_time(0), unfounded_time(0), convert_time(0), optimize_time(0),
-          project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), atoms(0), groups(0), aux_vars(0),
+          histogram_time(0), project_time(0), models_nodes(0), stable_nodes(0), peak_nodes(0), atoms(0), groups(0), aux_vars(0),
           load_time(0), loaded_dds(0), synthesized_atoms(0) {}
 };
 
@@ -208,6 +228,11 @@ struct CompileResult {
      * or bounding costs relative to the optimum, on a consistent program.
      */
     std::vector<long long> optimum;
+    /**
+     * @brief Cost histogram in ascending lexicographic order of the cost vectors,
+     * without the vectors of no answer set; filled only with CompileOptions::cost_histogram.
+     */
+    std::vector<CostCount> cost_histogram;
     /** @brief Statistics of the compilation. */
     CompileStats stats;
     /** @brief var_to_atom[v] = atom of DD variable v (0 for variables not used by this result). */
@@ -252,8 +277,8 @@ const size_t kMaxBddVariables = 65536;
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
  *         when optimizing or bounding costs with a #minimize weight outside the
  *         32-bit range, a cost bound with more entries than #minimize priority
- *         levels (or without any #minimize statement) or combined as
- *         CompileOptions forbids, more variables needed than kMaxBddVariables,
+ *         levels, a cost bound or cost_histogram without any #minimize
+ *         statement, cost bounds combined as CompileOptions forbids, more variables needed than kMaxBddVariables,
  *         use_project_statements without project_to_shown).
  */
 CompileResult compile(const Program& program, const CompileOptions& options = CompileOptions());

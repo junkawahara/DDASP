@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -848,4 +849,96 @@ TEST(Compiler, CostBoundsRejectBadCombinations) {
     Program no_minimize = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n0\n");
     EXPECT_THROW(compile(no_minimize, o), std::invalid_argument);  // no #minimize statement
     EXPECT_EQ(2u, family_of(compile(no_minimize, no_projection())).size());
+}
+
+namespace {
+
+typedef std::vector<std::pair<std::vector<long long>, long long> > Histogram;
+
+Histogram histogram_of(const CompileResult& res) {
+    Histogram h;
+    for (size_t i = 0; i < res.cost_histogram.size(); ++i) {
+        h.push_back(std::make_pair(res.cost_histogram[i].cost, std::stoll(res.cost_histogram[i].count.to_string())));
+    }
+    return h;
+}
+
+/**
+ * Brute-force histogram of kTwoLevelText restricted to the subsets with cost >= ge
+ * (none when ge is empty) and projected onto `shown`: every projected set counts
+ * once, at the smallest cost vector of the subsets projecting to it.
+ */
+Histogram brute_histogram(const std::set<Atom>& shown, const std::vector<long long>& ge = std::vector<long long>()) {
+    std::map<std::set<Atom>, std::vector<long long> > smallest;
+    for (int mask = 0; mask < 16; ++mask) {
+        std::set<Atom> x, p;
+        for (int a = 1; a <= 4; ++a) {
+            if (mask >> (a - 1) & 1) {
+                x.insert(a);
+                if (shown.count(a)) p.insert(a);
+            }
+        }
+        std::vector<long long> c = two_level_costs(x);
+        if (!ge.empty() && lex_compare(c, ge) < 0) continue;
+        std::map<std::set<Atom>, std::vector<long long> >::iterator it = smallest.find(p);
+        if (it == smallest.end() || c < it->second) smallest[p] = c;
+    }
+    std::map<std::vector<long long>, long long> counts;  // ascending lexicographic order
+    for (std::map<std::set<Atom>, std::vector<long long> >::iterator it = smallest.begin(); it != smallest.end(); ++it) {
+        ++counts[it->second];
+    }
+    return Histogram(counts.begin(), counts.end());
+}
+
+}  // namespace
+
+TEST(Compiler, CostHistogramCountsProjectedSetsByTheirSmallestCost) {
+    Program p = read_aspif_string(kTwoLevelText);
+    CompileOptions o = no_projection();
+    EXPECT_TRUE(compile(p, o).cost_histogram.empty());  // only on request
+    o.cost_histogram = true;
+    CompileResult res = compile(p, o);
+    Histogram all = brute_histogram(S(1, 2, 3, 4));  // one answer set per subset
+    EXPECT_EQ(all, histogram_of(res));
+    long long total = 0;
+    for (size_t i = 0; i < all.size(); ++i) total += all[i].second;
+    EXPECT_EQ(16, total);
+    EXPECT_LT(0.0, res.stats.histogram_time + 1.0);
+
+    // #show a/0. #show b/0. #show c/0.  (d hidden): each shown set counts once, at its smallest cost.
+    std::string text(kTwoLevelText);
+    text.insert(text.size() - 2, "4 1 a 1 1\n4 1 b 1 2\n4 1 c 1 3\n");
+    Program q = read_aspif_string(text);
+    CompileOptions po;
+    po.cost_histogram = true;
+    CompileResult pres = compile(q, po);
+    Histogram projected = brute_histogram(S(1, 2, 3));
+    EXPECT_EQ(projected, histogram_of(pres));
+    EXPECT_LT(projected.size(), all.size());
+    long long seen = 0;
+    for (size_t i = 0; i < projected.size(); ++i) {
+        seen += projected[i].second;
+        CompileOptions upto;  // the cumulative count is the count of --cost-le at that vector
+        upto.cost_le = bounds_of(projected[i].first, false);
+        EXPECT_EQ(std::to_string(seen), compile(q, upto).zdd.exact_count().to_string()) << i;
+    }
+    EXPECT_EQ(std::to_string(seen), pres.zdd.exact_count().to_string());
+
+    // The histogram describes the result: with optimize one entry, with a bound the sets within it.
+    po.optimize = true;
+    CompileResult best = compile(q, po);
+    ASSERT_EQ(1u, best.cost_histogram.size());
+    EXPECT_EQ(LL(1, 2), best.cost_histogram[0].cost);
+    EXPECT_EQ(best.optimum, best.cost_histogram[0].cost);
+    EXPECT_EQ(best.zdd.exact_count().to_string(), best.cost_histogram[0].count.to_string());
+    po.optimize = false;
+    po.cost_ge = bounds_of(LL(2, 3), false);  // a shown set may now count at a larger cost than before
+    EXPECT_EQ(brute_histogram(S(1, 2, 3), LL(2, 3)), histogram_of(compile(q, po)));
+    po.cost_ge.clear();
+
+    // An inconsistent program has an empty histogram; without #minimize the option is an error.
+    Program unsat = read_aspif_string(std::string(kTwoLevelText).replace(10, 0, "1 0 0 0 0\n"));
+    EXPECT_TRUE(compile(unsat, po).cost_histogram.empty());
+    Program no_minimize = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n0\n");
+    EXPECT_THROW(compile(no_minimize, po), std::invalid_argument);
 }
