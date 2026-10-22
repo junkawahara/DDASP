@@ -39,6 +39,10 @@ def ddasp_answer_sets(ddasp_bin, files, *extra):
     return Counter(frozenset(line.split()) for line in out.splitlines())
 
 
+def _quiet(code, message):
+    """clingo logger that drops the info messages (atoms in no rule head, unused #show signatures)."""
+
+
 def _external_atoms(ctl):
     return [a.symbol for a in ctl.symbolic_atoms if a.is_external]
 
@@ -66,7 +70,7 @@ def clingo_answer_sets(files, project=False, optimize=False, bound=None):
         args.append("--opt-mode=enum," + ",".join(str(k) for k in bound))
     else:
         args.append("--opt-mode=ignore")  # every answer set, whatever its #minimize cost
-    ctl = clingo.Control(args)
+    ctl = clingo.Control(args, logger=_quiet)
     for f in files:
         ctl.load(str(f))
     ctl.ground([("base", [])])
@@ -94,7 +98,7 @@ def clingo_costed_answer_sets(files):
     ``--opt-mode=enum`` without a bound enumerates every answer set and still
     reports its #minimize costs (``--opt-mode=ignore`` reports none).
     """
-    ctl = clingo.Control(["0", "--eq=0", "--opt-mode=enum"], logger=lambda code, msg: None)
+    ctl = clingo.Control(["0", "--eq=0", "--opt-mode=enum"], logger=_quiet)
     for f in files:
         ctl.load(str(f))
     ctl.ground([("base", [])])
@@ -108,7 +112,7 @@ def clingo_costed_answer_sets(files):
 
 def clingo_optimum(files):
     """Optimal cost vector reported by clingo (None if the program is inconsistent)."""
-    ctl = clingo.Control(["0", "--opt-mode=optN", "--eq=0"])
+    ctl = clingo.Control(["0", "--opt-mode=optN", "--eq=0"], logger=_quiet)
     for f in files:
         ctl.load(str(f))
     ctl.ground([("base", [])])
