@@ -1317,20 +1317,47 @@ std::map<std::string, std::set<Atom> > atoms_by_name(const Program& prog) {
 }
 
 /**
+ * Whether every literal of `body` is implied by `by` in every model of the
+ * program: it occurs in `by`, or it is an atom g and `by` has `not n` for an
+ * atom n with a rule `n :- not g` (n false forces g true). Both are classical
+ * consequences of the rules, so they hold in every answer set.
+ */
+bool body_implied(const Body& body, const Body& by, const std::set<std::pair<Atom, Atom> >& neg_rules) {
+    std::set<Literal> given;
+    for (size_t i = 0; i < by.lits.size(); ++i) given.insert(by.lits[i].lit);
+    for (size_t i = 0; i < body.lits.size(); ++i) {
+        Literal l = body.lits[i].lit;
+        if (given.count(l)) continue;
+        if (!is_positive(l)) return false;
+        bool found = false;
+        for (std::set<Literal>::const_iterator it = given.begin(); it != given.end() && !found; ++it) {
+            found = !is_positive(*it) && neg_rules.count(std::make_pair(atom_of(*it), l)) != 0;
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+/**
  * Atoms defined by the program: the head atoms of its rules, except in the
  * auxiliary disjunctions gringo emits when it rewrites a recursive aggregate
- * (`!=`, negative weights): `aux | a :- B` together with `aux :- not a`, aux
- * being an unnamed atom. Given the second rule, the first can never be the
- * support of a (aux is true whenever a is false, and gringo's rewriting makes
- * aux true whenever B is), so an atom of a loaded DD may occur in it.
+ * (`!=`, negative weights): `aux | a :- not n` together with `n :- not g`,
+ * `aux :- g` and `aux :- not a`, aux being an unnamed atom. The rules make
+ * aux true whenever the body of the disjunction is (n false forces g true,
+ * which derives aux), so the disjunction can never be the support of a and an
+ * atom of a loaded DD may occur in it. A hand-written `aux | a :- B` with
+ * `aux :- not a` alone does support a when B holds and aux is false, so the
+ * rule deriving aux from the body is required (body_implied).
  */
 std::set<Atom> defined_atoms(const Program& prog, const std::map<Atom, std::string>& primary) {
-    std::set<std::pair<Atom, Atom> > complement;  // (aux, a) for every rule aux :- not a
+    std::set<std::pair<Atom, Atom> > neg_rules;  // (h, g) for every rule h :- not g
+    std::map<Atom, std::vector<size_t> > normal_rules_of;  // rules `h :- B` with a normal body, by h
     for (size_t r = 0; r < prog.rules().size(); ++r) {
         const Rule& rule = prog.rules()[r];
-        if (rule.head_type == HeadType::Disjunction && rule.head.size() == 1 && rule.body.type == BodyType::Normal &&
-            rule.body.lits.size() == 1 && !is_positive(rule.body.lits[0].lit)) {
-            complement.insert(std::make_pair(rule.head[0], atom_of(rule.body.lits[0].lit)));
+        if (rule.head_type != HeadType::Disjunction || rule.head.size() != 1 || rule.body.type != BodyType::Normal) continue;
+        normal_rules_of[rule.head[0]].push_back(r);
+        if (rule.body.lits.size() == 1 && !is_positive(rule.body.lits[0].lit)) {
+            neg_rules.insert(std::make_pair(rule.head[0], atom_of(rule.body.lits[0].lit)));
         }
     }
     std::set<Atom> defined;
@@ -1338,9 +1365,16 @@ std::set<Atom> defined_atoms(const Program& prog, const std::map<Atom, std::stri
         const Rule& rule = prog.rules()[r];
         for (size_t h = 0; h < rule.head.size(); ++h) {
             Atom a = rule.head[h];
-            if (rule.head_type == HeadType::Disjunction && rule.head.size() == 2) {
+            if (rule.head_type == HeadType::Disjunction && rule.head.size() == 2 && rule.body.type == BodyType::Normal) {
                 Atom aux = rule.head[1 - h];
-                if (!primary.count(aux) && complement.count(std::make_pair(aux, a))) continue;
+                if (!primary.count(aux) && neg_rules.count(std::make_pair(aux, a))) {
+                    bool derived = false;  // some rule derives aux whenever the body holds
+                    const std::vector<size_t>& rs = normal_rules_of[aux];
+                    for (size_t k = 0; k < rs.size() && !derived; ++k) {
+                        derived = body_implied(prog.rules()[rs[k]].body, rule.body, neg_rules);
+                    }
+                    if (derived) continue;
+                }
             }
             defined.insert(a);
         }

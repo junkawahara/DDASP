@@ -193,6 +193,23 @@ def test_recursive_aggregates_over_stored_atoms(tmp_path, second):
     assert set(res.answer_sets()) == set(clingo_answer_sets([p1, p2], project=True))
 
 
+def test_hand_written_disjunction_over_a_stored_atom_is_rejected(tmp_path, ddasp_bin):
+    # a is never true (x is derived whenever c is), but gringo keeps it as an atom.
+    old = _write(tmp_path, "old.lp", "{ c }. a | x :- c. x :- c. #show a/0.")
+    stored = tmp_path / "old.ddasp"
+    run_ddasp(ddasp_bin, [old], "--save", stored)
+    assert stored.read_bytes().startswith(b"ddasp-dd 1\natoms 1\na\n")
+    # The disjunction supports a when b holds and aux is false: the combined program has
+    # the answer set {a, b} that the stored family (a never true) would drop.
+    new = _write(tmp_path, "new.lp", "{ b }. aux :- not a. aux | a :- b. #show b/0.")
+    show = _write(tmp_path, "show.lp", "#show a/0. #show b/0.")
+    assert len(clingo_answer_sets([old, new, show], project=True)) == 3
+    proc = _ddasp(ddasp_bin, "--load", stored, new)
+    assert proc.returncode == 1 and "defined by a rule" in proc.stderr
+    with pytest.raises(ValueError, match="defined by a rule"):
+        ddasp.compile_files([new], dds=[ddasp.load(stored)])
+
+
 def test_show_terms_conditioned_on_facts_do_not_block_saving(tmp_path, ddasp_bin):
     # gringo gives `#show w : f.` the condition `not __atomN` with N an atom of
     # no rule; such an atom is false, not a DD variable, so the DD can be stored.

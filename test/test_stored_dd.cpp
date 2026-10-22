@@ -529,6 +529,26 @@ TEST(LoadedDD, AcceptsGringosAuxiliaryDisjunctions) {
                  std::invalid_argument);
 }
 
+TEST(LoadedDD, HandWrittenDisjunctionWithTheComplementRuleDefinesTheAtom) {
+    // {c}. a :- c, d. d :- a. #show a/0.   (a is unfounded: the family is {∅})
+    LoadedDD d = load_from(compile_aspif("asp 1 0 0\n1 1 1 1 0 0\n1 0 1 2 0 2 1 3\n1 0 1 3 0 1 2\n4 1 a 1 2\n0\n"));
+    // #external a. {b}. aux :- not a. aux | a :- b. #show b/0. #show a : a.
+    // The disjunction supports a when b holds and aux is false (no rule derives aux
+    // from b), so the combined program has the answer set {a, b, d}: a is defined.
+    const char* p_new = "asp 1 0 0\n5 3 0\n1 1 1 1 0 0\n1 0 1 2 0 1 -3\n1 0 2 2 3 0 1 1\n4 1 b 1 1\n4 1 a 1 3\n0\n";
+    EXPECT_THROW(family_with(p_new, one(d)), std::invalid_argument);
+    // With `aux :- b` as well the disjunction never supports a (gringo's shape): accepted,
+    // and the result equals the combined program's answer sets over {a, b}.
+    const char* p_ok = "asp 1 0 0\n5 3 0\n1 1 1 1 0 0\n1 0 1 2 0 1 -3\n1 0 1 2 0 1 1\n1 0 2 2 3 0 1 1\n4 1 b 1 1\n4 1 a 1 3\n0\n";
+    NameFamily expected;
+    expected.insert(N());
+    expected.insert(N("b"));
+    EXPECT_EQ(expected, family_with(p_ok, one(d)));
+    EXPECT_EQ(expected, family_plain("asp 1 0 0\n1 1 1 1 0 0\n1 0 1 2 0 2 1 3\n1 0 1 3 0 1 2\n"
+                                     "1 1 1 4 0 0\n1 0 1 5 0 1 -2\n1 0 1 5 0 1 4\n1 0 2 5 2 0 1 4\n"
+                                     "4 1 a 1 2\n4 1 b 1 4\n0\n"));
+}
+
 // ---------------------------------------------------------------------------
 // Variable order: the atoms of a loaded DD keep their stored relative order.
 

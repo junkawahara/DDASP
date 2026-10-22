@@ -328,10 +328,13 @@ the other), and an integrity constraint over x variables does not change
 supportedness or unfoundedness, so `Stable(P ∪ D) = Stable(P) ∧ D`. The
 loaded atoms are free in the compilation whatever rules mention them. One
 head occurrence is allowed: when gringo rewrites a recursive aggregate with
-`!=` or negative weights, it emits `aux | a :- B` together with `aux :- not a`
-for an atom `a` of the aggregate (`aux` unnamed); given the second rule the
-first can never support `a`, so it is accepted (`defined_atoms` in
-`src/compiler.cpp`). The
+`!=` or negative weights, it emits `aux | a :- not n` together with
+`n :- not g`, `aux :- g` and `aux :- not a` for an atom `a` of the aggregate
+(`aux` unnamed); the rules make `aux` true whenever the body of the
+disjunction holds, so it can never support `a` and is accepted
+(`defined_atoms` in `src/compiler.cpp`, which requires a rule deriving `aux`
+from the body: with `aux :- not a` alone, a hand-written `aux | a :- B` does
+support `a` and is rejected). The
 stored ZDD is renamed onto P's x variables and conjoined with the models
 before the unfounded-set check (it prunes the intermediate BDDs); the result
 is AS(P_old ∪ P) projected onto atoms(D) ∪ shown(P). Hidden atoms of P_old are
