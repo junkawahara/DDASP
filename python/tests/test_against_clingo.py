@@ -425,6 +425,17 @@ def test_order_file_and_bdd_export(ddasp_bin, tmp_path):
     assert bdd.count(5) == 8  # characteristic function of 8 answer sets over 5 variables
 
 
+def test_order_file_may_name_atoms_of_tautological_rules_only(ddasp_bin, tmp_path):
+    # {a}. b :- a, not a.  (gringo drops such rules itself, so only aspif input has them)
+    aspif = tmp_path / "taut.aspif"
+    aspif.write_text("asp 1 0 0\n1 1 1 1 0 0\n1 0 1 2 0 2 1 -1\n4 1 a 1 1\n4 1 b 1 2\n0\n")
+    order = tmp_path / "order.txt"
+    order.write_text("b\na\n")
+    proc = subprocess.run([str(ddasp_bin), "-q", "--count", "--order", str(order), str(aspif)],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0 and proc.stdout.strip() == "2", proc.stderr
+
+
 def test_external_values_flag(ddasp_bin, tmp_path):
     path = tmp_path / "ext.lp"
     path.write_text("#external a. [true] #external b. [false] #external c. d :- a. "

@@ -206,6 +206,14 @@ def test_order_and_variables():
     assert res_custom.bdd is not None
 
 
+def test_order_may_name_atoms_of_tautological_rules_only():
+    # b occurs in a tautology only: dropped before compiling, so it has no variable, but naming it is fine.
+    res = ddasp.compile_text("{ a }. b :- a, not a. #show a/0. #show b/0.", order=[2, 1], project=False)
+    assert res.stats["simplified_rules"] == 1 and res.levels == [1] and 2 not in res.atom_to_level
+    with pytest.raises(ValueError, match="unknown atom"):
+        ddasp.compile_text("{ a }. #show a/0.", order=[7])
+
+
 def test_variables_of_atoms_true_in_no_answer_set():
     # a sits on top of b and is never true: the exported diagram has no node at
     # its level, so its variable has to be created when the diagram is imported.
