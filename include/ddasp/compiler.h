@@ -151,7 +151,9 @@ struct CompileOptions {
     /**
      * Atom order for the DD variables, listed from the top of the diagram down.
      * Atoms of the program missing from the list are appended below the listed
-     * ones in the order given by @c order_heuristic.
+     * ones in the order given by @c order_heuristic. An atom that is not an
+     * atom of the program (program_atoms) is an error, except one that only
+     * tautological rules mention: it has no DD variable and is ignored.
      */
     std::vector<Atom> order;
 

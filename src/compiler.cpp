@@ -1395,16 +1395,41 @@ Program program_to_compile(const Program& program, const CompileOptions& options
     return program.without_tautologies(&simplified);
 }
 
+namespace {
+
+/**
+ * The options without the order atoms that the simplification removed from
+ * the program (atoms of tautological rules only, which get no DD variable,
+ * like any atom of no rule); an atom unknown to the original program stays
+ * in the list and is rejected by resolve_order.
+ */
+CompileOptions options_for(const Program& input, const Program& simple, const CompileOptions& options,
+                           size_t simplified) {
+    if (simplified == 0 || options.order.empty()) return options;
+    std::vector<Atom> before = program_atoms(input), after = program_atoms(simple);
+    std::set<Atom> gone(before.begin(), before.end());
+    for (size_t i = 0; i < after.size(); ++i) gone.erase(after[i]);
+    CompileOptions out = options;
+    out.order.clear();
+    for (size_t i = 0; i < options.order.size(); ++i) {
+        if (!gone.count(options.order[i])) out.order.push_back(options.order[i]);
+    }
+    return out;
+}
+
+}  // namespace
+
 CompileResult compile(const Program& program, const CompileOptions& options) {
     size_t simplified = 0;
     Program simple = program_to_compile(program, options, simplified);
-    return compile_with(simple, options, 0, simplified);
+    return compile_with(simple, options_for(program, simple, options, simplified), 0, simplified);
 }
 
 CompileResult compile(const Program& input, const CompileOptions& options, const std::vector<LoadedDD>& loaded) {
     if (loaded.empty()) return compile(input, options);
     size_t simplified = 0;
     Program program = program_to_compile(input, options, simplified);
+    CompileOptions opts = options_for(input, program, options, simplified);
 
     std::map<std::string, std::set<Atom> > by_name = atoms_by_name(program);
     std::set<std::string> program_facts;
@@ -1481,7 +1506,7 @@ CompileResult compile(const Program& input, const CompileOptions& options, const
         }
     }
 
-    CompileResult res = compile_with(*prog, options, &targets, simplified);
+    CompileResult res = compile_with(*prog, opts, &targets, simplified);
     res.stats.synthesized_atoms = synthesized;
     std::set<std::string> have(res.fact_names.begin(), res.fact_names.end());
     for (size_t d = 0; d < loaded.size(); ++d) {

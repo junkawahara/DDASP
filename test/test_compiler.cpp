@@ -959,6 +959,29 @@ TEST(Compiler, TautologicalRulesDoNotDefineExternals) {
     EXPECT_EQ(F(S(), S(1, 2)), fam);
 }
 
+TEST(Compiler, OrderMayNameAtomsOfTautologicalRulesOnly) {
+    // {a}. b :- a, not a.   b is an atom of the program, but the tautology is dropped before
+    // compiling: an order naming b must not fail (the CLI resolves order files on the program as read).
+    Program p = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n1 0 1 2 0 2 1 -1\n4 1 a 1 1\n4 1 b 1 2\n0\n");
+    CompileOptions o = no_projection();
+    o.order.push_back(2);
+    o.order.push_back(1);
+    CompileResult res = compile(p, o);
+    EXPECT_EQ(F(S(), S(1)), family_of(res));
+    EXPECT_EQ(1u, res.vars.size());
+    EXPECT_EQ(0u, res.atom_to_var[2]);
+    EXPECT_EQ(1u, res.stats.simplified_rules);
+    // An atom of no rule at all is still unknown.
+    o.order.push_back(3);
+    EXPECT_THROW(compile(p, o), std::invalid_argument);
+    // Supported models keep the tautologies, so b is an ordinary atom there.
+    CompileOptions sup = no_projection();
+    sup.semantics = Semantics::Supported;
+    sup.order.push_back(2);
+    CompileResult supported = compile(p, sup);
+    EXPECT_EQ(2, supported.var_to_atom[supported.vars[0]]);
+}
+
 TEST(Compiler, TautologiesKeepTheSupportOfTheOtherChoiceAtoms) {
     // {a(1)}. {a; b(2)} :- a.   b keeps its support: {}, {a}, {a, b}.
     Family fam = compile_family("asp 1 0 0\n1 1 1 1 0 0\n1 1 2 1 2 0 1 1\n0\n");
