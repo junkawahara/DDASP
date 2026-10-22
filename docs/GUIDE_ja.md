@@ -1081,7 +1081,8 @@ KyotoDD で直接作った ZDD も `StoredDD.from_zdd` で同じように使え�
 
 **Q. `#count` / `#sum` / 選言ルール(`a | b :- ...`)は使えますか?**
 はい。通常ルール、選択ルール、制約、選言ルール、`#count` / `#sum` を含む本体、
-`#show`、`#minimize`、`#external`(初期値は `--external-values` を付けたときだけ使う)、
+`#show`、`#minimize`、`#external`(初期値は `--external-values` を付けたときだけ使う。ルールの頭部に
+現れた外部原子は clingo と同様に外部原子でなくなるが、`a :- a, B` のような恒真ルールは数えない)、
 `#project`(`--project` を付けたときだけ使う)、assumption(aspif の 6 文、常に制約として使う)に
 対応しています。`#heuristic`、edge、theory は警告を出して無視します。
 

@@ -8,8 +8,9 @@ Supported: normal, choice, constraint and disjunctive rules (including non
 head-cycle-free programs), `#count`/`#sum` bodies, `#show` projection
 (including `#show t : not a.` style terms), `#minimize` (optimal answer sets
 only, or cost functions), `#external` atoms (kept as free variables unless a
-rule defines them, as in clingo; `--external-values` fixes them to their
-declared initial value instead), assumptions (aspif `6` statements, kept as
+rule defines them, as in clingo; tautological rules such as `a :- a, B` do
+not count; `--external-values` fixes them to their declared initial value
+instead), assumptions (aspif `6` statements, kept as
 constraints), `#project` (with `--project`, like clingo). Brave and cautious
 consequences and the number of answer sets displaying each name are read off
 the diagram (`--brave`, `--cautious`, `--frequencies`). `#heuristic`, edges

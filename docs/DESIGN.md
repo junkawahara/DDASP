@@ -45,6 +45,17 @@ release; `u_a` plays the role of `a ∈ X \ Y`.)
   atoms stay free). When a rule has `a` in the head, the declaration is
   ignored (as in clingo, where such an atom is no longer external):
   `#external e. {a}. e :- a.` has the answer sets `{}` and `{a, e}` only.
+  Tautological rules do not count: before compiling, `Program::without_tautologies`
+  drops the rules whose body contains an atom and its negation and the
+  disjunctive rules with a head atom in the positive body, and removes a head
+  atom that occurs in the body of a choice rule or in the negative body of a
+  disjunctive rule (`a | H :- B, not a` becomes `H :- B, not a`). These
+  transformations preserve strong equivalence, so the answer sets are the same,
+  and an external atom whose rules are all tautologies stays free, as in
+  clingo, which decides after clasp's simplifications. clasp goes further:
+  `:- g. e :- g.` leaves `e` external there because propagation removes the
+  rule (while `:- g, k. :- g, not k. e :- g.` does not); DDASP does not follow
+  that, `e` is defined by `e :- g` and false.
 - Assumptions (aspif `6` statements, `Observer.assume`) are unit integrity
   constraints: every answer set satisfies each assumed literal. An assumed
   atom of no rule is false, so assuming it leaves no answer set. They are
@@ -354,10 +365,12 @@ linear; any other order is still correct, only slower.
   to the grounder as gringo's `-c` and rejected with aspif input (already ground).
 - 2026-10-22: `python/tests/test_random_programs.py` checks ddasp against clingo on a seeded
   stream of random propositional programs (`DDASP_RANDOM_PROGRAMS`, default 500; both methods ×
-  projection × optimization). Its `#external` atoms occur in no rule head: clingo keeps an
-  external free when every rule with it in the head is a tautology (`a :- a, B`, a body with
-  `l` and `not l`) or is dropped by clasp's propagation (`:- g. a :- g.`), while DDASP counts
-  every head occurrence as a definition.
+  projection × optimization). It found that clingo keeps an `#external` atom free when every
+  rule with it in the head is a tautology (`a :- a, B`, a body with `l` and `not l`, `a :- B,
+  not a`) or is removed by clasp's propagation (`:- g. a :- g.`). The user chose to drop the
+  syntactic tautologies before compiling (`Program::without_tautologies`, answer sets unchanged)
+  so that such externals stay free as in clingo, and not to follow clasp's propagation; the
+  random programs therefore put their `#external` atoms in no rule head.
 - 2026-10-22: cost-ordered enumeration uses both methods (KyotoDD's k-best iterator when
   it applies, peeling otherwise); lines are `K[,K..]: atoms`; `--by-cost` implies
   `--enumerate`; Python offers the lazy `answer_sets(by_cost=True)` (weighted atoms must
