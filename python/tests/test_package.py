@@ -202,3 +202,21 @@ def test_external_values():
     with ctl.solve(yield_=True) as handle:
         models = {frozenset(str(s) for s in m.symbols(shown=True)) for m in handle}
     assert models == {frozenset({"a", "d"})}
+
+
+def test_project_statements():
+    import warnings
+
+    from test_against_clingo import PROJECT_PROGRAM
+
+    assert ddasp.compile_text(PROJECT_PROGRAM).count == 8
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        res = ddasp.compile_text(PROJECT_PROGRAM, project="project")
+    assert set(res.answer_sets()) == {frozenset(), frozenset({"a"}), frozenset({"a", "__atom4"})}
+    assert any("#project" in str(w.message) for w in caught)
+    assert res.terms == []
+    with pytest.raises(ValueError):
+        ddasp.compile_text(PROJECT_PROGRAM, project="shown")
+    with pytest.raises(ValueError):
+        ddasp.compile_text(PROJECT_PROGRAM, project="project", method="nope")

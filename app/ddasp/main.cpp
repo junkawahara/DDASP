@@ -44,6 +44,7 @@ struct Options {
     bool quiet = false;
     bool export_bdd = false;
     bool all_atoms = false;
+    bool use_project = false;
     bool optimize = false;
     bool external_values = false;
     std::string method = "scc";
@@ -79,6 +80,9 @@ void usage(std::ostream& os) {
           "                     may be repeated\n"
           "  --all-atoms        do not project onto the shown atoms (every atom\n"
           "                     becomes a DD variable)\n"
+          "  --project          project onto the atoms of the #project statements\n"
+          "                     instead of the shown atoms (when the program has\n"
+          "                     any; unnamed ones are displayed as __atomN)\n"
           "  --opt              keep only the optimal answer sets (#minimize)\n"
           "  --external-values  fix every free #external atom to its declared initial\n"
           "                     value (`#external a. [true]`; gringo declares a plain\n"
@@ -127,6 +131,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.export_bdd = true;
         } else if (a == "--all-atoms") {
             opt.all_atoms = true;
+        } else if (a == "--project") {
+            opt.use_project = true;
         } else if (a == "--opt") {
             opt.optimize = true;
         } else if (a == "--external-values") {
@@ -156,6 +162,10 @@ bool parse_args(int argc, char** argv, Options& opt) {
     }
     if (opt.inputs.empty()) {
         std::cerr << "ddasp: no input file\n";
+        return false;
+    }
+    if (opt.use_project && opt.all_atoms) {
+        std::cerr << "ddasp: --project and --all-atoms cannot be combined\n";
         return false;
     }
     if (opt.enumerate_limit != 0 && !opt.enumerate) {
@@ -350,6 +360,7 @@ int main(int argc, char** argv) {
         Clock::time_point t1 = Clock::now();
         CompileOptions copts;
         copts.project_to_shown = !opt.all_atoms;
+        copts.use_project_statements = opt.use_project;
         copts.optimize = opt.optimize;
         copts.external_values = opt.external_values;
         copts.method = parse_method(opt.method);
@@ -360,6 +371,7 @@ int main(int argc, char** argv) {
         }
         CompileResult res = compile(program, copts, loaded);
         double t_compile = seconds_since(t1);
+        for (size_t i = 0; i < res.warnings.size(); ++i) std::cerr << "ddasp: warning: " << res.warnings[i] << "\n";
 
         if (opt.stats) {
             const CompileStats& st = res.stats;

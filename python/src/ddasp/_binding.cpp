@@ -76,6 +76,7 @@ struct PlainResult {
     std::string stored_bytes;                 // the result as a stored DD file image
     std::string stored_error;                 // why it cannot be stored (when !stored_ok)
     std::vector<std::string> stored_warnings;
+    std::vector<std::string> warnings;
 };
 
 PlainResult compile_plain(const Program& program, const CompileOptions& opts, const std::vector<StoredDDData>& stored) {
@@ -111,6 +112,7 @@ PlainResult compile_plain(const Program& program, const CompileOptions& opts, co
     }
     out.names = res.names;
     out.fact_names = res.fact_names;
+    out.warnings = res.warnings;
     for (size_t t = 0; t < res.terms.size(); ++t) {
         out.terms.push_back(std::make_pair(res.terms[t].name, res.terms[t].condition));
     }
@@ -171,13 +173,14 @@ StoredDDData parse_stored(const std::string& bytes) {
 }
 
 Result compile_py(const Program& program, const std::string& method, const std::string& order_heuristic,
-                  const std::vector<int>& order, bool project, bool optimize, bool external_values,
-                  const std::vector<py::bytes>& loaded) {
+                  const std::vector<int>& order, bool project, bool use_project_statements, bool optimize,
+                  bool external_values, const std::vector<py::bytes>& loaded) {
     CompileOptions opts;
     opts.method = parse_method(method);
     opts.order_heuristic = parse_order_heuristic(order_heuristic);
     opts.order = order;
     opts.project_to_shown = project;
+    opts.use_project_statements = use_project_statements;
     opts.optimize = optimize;
     opts.external_values = external_values;
     std::vector<StoredDDData> stored;
@@ -194,6 +197,9 @@ Result compile_py(const Program& program, const std::string& method, const std::
         PyErr_WarnEx(PyExc_RuntimeWarning,
                      "ddasp: KyotoDD could not be reset (live objects remain); levels continue from the "
                      "previous compilation", 1);
+    }
+    for (size_t i = 0; i < plain.warnings.size(); ++i) {
+        PyErr_WarnEx(PyExc_RuntimeWarning, ("ddasp: " + plain.warnings[i]).c_str(), 1);
     }
 
     Result out;
@@ -284,7 +290,8 @@ PYBIND11_MODULE(_core, m) {
              },
              py::arg("atom"), py::arg("value") = 0,
              "Add an #external atom (value: 0 free, 1 true, 2 false, 3 release; used only with external_values).")
-        .def("add_projection", &Program::add_projection, py::arg("atoms"), "Record a #project statement.")
+        .def("add_projection", &Program::add_projection, py::arg("atoms"),
+             "Add a #project statement (used with project=\"project\").")
         .def("add_assumption", &Program::add_assumption, py::arg("literals"),
              "Add an assumption: every answer set must satisfy all of the literals.")
         .def_property_readonly("num_rules", [](const Program& p) { return p.rules().size(); })
@@ -317,7 +324,8 @@ PYBIND11_MODULE(_core, m) {
         .def_readonly("stored_warnings", &Result::stored_warnings);
 
     m.def("compile", &compile_py, py::arg("program"), py::arg("method") = "scc", py::arg("order") = "name",
-          py::arg("order_atoms") = std::vector<int>(), py::arg("project") = true, py::arg("optimize") = false,
+          py::arg("order_atoms") = std::vector<int>(), py::arg("project") = true,
+          py::arg("use_project_statements") = false, py::arg("optimize") = false,
           py::arg("external_values") = false, py::arg("loaded") = std::vector<py::bytes>(),
           "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images.");
 

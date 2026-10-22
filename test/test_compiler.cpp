@@ -220,6 +220,41 @@ TEST(Compiler, ExternalValuesFixTheFreeExternals) {
     EXPECT_EQ(F(S(1)), compile_family("asp 1 0 0\n5 1 2\n5 1 1\n0\n", o));
 }
 
+TEST(Compiler, ProjectStatementsReplaceTheShownAtoms) {
+    // {a; b; c}. d :- a, b.  #show a/0. #show b/0. #show t : not c.  #project a. #project d.
+    const char* text =
+        "asp 1 0 0\n1 1 3 1 2 3 0 0\n1 0 1 4 0 2 1 2\n"
+        "4 1 a 1 1\n4 1 b 1 2\n4 1 t 1 -3\n3 2 1 4\n0\n";
+    Program p = read_aspif_string(text);
+    CompileOptions o;  // default: shown atoms a, b, c
+    EXPECT_EQ(8u, family_of(compile(p, o)).size());
+    o.use_project_statements = true;
+    CompileResult res = compile(p, o);
+    EXPECT_EQ(F(S(), S(1), S(1, 4)), family_of(res));  // over {a, d}: d forces a
+    ASSERT_EQ(2u, res.vars.size());
+    EXPECT_EQ("__atom4", res.names.find(4)->second);  // unnamed projected atom gets a display name
+    std::vector<std::string> shown = res.shown_names(std::vector<Atom>(1, 4));
+    ASSERT_EQ(1u, shown.size());
+    EXPECT_EQ("__atom4", shown[0]);
+    EXPECT_TRUE(res.terms.empty());  // t : not c left the projection
+    ASSERT_EQ(1u, res.warnings.size());
+    EXPECT_NE(std::string::npos, res.warnings[0].find("#project"));
+    // Without #project statements the option changes nothing.
+    Program q = read_aspif_string("asp 1 0 0\n1 1 2 1 2 0 0\n4 1 a 1 1\n0\n");
+    EXPECT_EQ(F(S(), S(1)), family_of(compile(q, o)));
+    EXPECT_TRUE(compile(q, o).warnings.empty());
+    // Terms over projected atoms (or constants) stay; a projected atom of no rule is dropped.
+    Program r = read_aspif_string("asp 1 0 0\n1 1 1 1 0 0\n4 1 t 1 -1\n4 1 w 1 -5\n3 2 1 5\n0\n");
+    CompileResult rr = compile(r, o);
+    EXPECT_EQ(2u, rr.terms.size());
+    EXPECT_EQ(1u, rr.vars.size());
+    EXPECT_TRUE(rr.warnings.empty());
+    // --project needs projection.
+    CompileOptions bad = no_projection();
+    bad.use_project_statements = true;
+    EXPECT_THROW(compile(p, bad), std::invalid_argument);
+}
+
 TEST(Compiler, UnsupportedAtomInBodyOnly) {
     // a :- b.   (b has no rule)
     EXPECT_EQ(F(S()), compile_family("asp 1 0 0\n1 0 1 1 0 1 2\n0\n"));

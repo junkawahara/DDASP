@@ -1,8 +1,10 @@
 """Compare ddasp's answer sets with clingo's enumeration."""
 
 import subprocess
+from collections import Counter
 from pathlib import Path
 
+import clingo
 import kyotodd
 import pytest
 
@@ -228,3 +230,34 @@ def test_external_values_flag(ddasp_bin, tmp_path):
     assert sum(ddasp_answer_sets(ddasp_bin, [path]).values()) == 8
     got = ddasp_answer_sets(ddasp_bin, [path], "--external-values")
     assert set(got) == {frozenset({"a", "d"})}  # `#external c.` is declared false by gringo
+
+
+PROJECT_PROGRAM = """
+    { a; b; c }. d :- a, b.
+    #show a/0. #show b/0. #show t : not c.
+    #project a. #project d.
+"""
+
+
+def clingo_projected(files):
+    ctl = clingo.Control(["0", "--project"])
+    for f in files:
+        ctl.load(str(f))
+    ctl.ground([("base", [])])
+    with ctl.solve(yield_=True) as handle:
+        return [frozenset(str(s) for s in m.symbols(shown=True)) for m in handle]
+
+
+def test_project_statements(ddasp_bin, tmp_path):
+    path = tmp_path / "project.lp"
+    path.write_text(PROJECT_PROGRAM)
+    assert len(ddasp_answer_sets(ddasp_bin, [path])) == 8  # #project is ignored by default
+    out, err = run_ddasp(ddasp_bin, [path], "--enumerate", "-q", "--project")
+    got = Counter(frozenset(line.split()) for line in out.splitlines())
+    assert got == Counter({frozenset(): 1, frozenset({"a"}): 1, frozenset({"a", "__atom4"}): 1})
+    assert "#project" in err and "not shown" in err
+    # clingo --project gives one representative per projection class, i.e. the same number of sets.
+    assert len(clingo_projected([path])) == 3
+    proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, "--project", "--all-atoms", str(path)],
+                          capture_output=True, text=True)
+    assert proc.returncode == 2 and "cannot be combined" in proc.stderr

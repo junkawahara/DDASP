@@ -429,7 +429,7 @@ def compile(
     program: Program,
     method: str = "scc",
     order: Union[str, Sequence[int]] = "name",
-    project: bool = True,
+    project: Union[bool, str] = True,
     optimize: bool = False,
     external_values: bool = False,
     dds: Iterable = (),
@@ -439,7 +439,13 @@ def compile(
     :param method: ``"scc"`` (default) or ``"twocopy"``.
     :param order: ``"name"`` (default), ``"id"``, or a list of atom ids to place on top
                   (the remaining atoms follow in name order).
-    :param project: project the answer sets onto the shown atoms.
+    :param project: ``True`` (default): project the answer sets onto the shown atoms;
+                    ``False``: every atom becomes a DD variable; ``"project"``: project
+                    onto the atoms of the ``#project`` statements instead, when the
+                    program has any (like clingo's ``--project``; projected atoms
+                    without a ``#show`` name are named ``__atom<id>``, and ``#show``
+                    terms whose condition leaves the projection are dropped with a
+                    ``RuntimeWarning``).
     :param optimize: keep only the optimal answer sets (#minimize). Weights must fit
                      in 32 bits (``ValueError`` otherwise); note that clingo itself
                      truncates larger weights to 32 bits while grounding.
@@ -459,7 +465,14 @@ def compile(
     else:
         heuristic, order_atoms = "name", list(order)
     loaded = [dd.data for dd in _stored_list(dds)]
-    return Result(_core_compile(program, method, heuristic, order_atoms, project, optimize, external_values, loaded))
+    if project == "project":
+        project, use_project = True, True
+    elif isinstance(project, bool):
+        use_project = False
+    else:
+        raise ValueError(f"project: expected True, False or 'project', got {project!r}")
+    return Result(_core_compile(program, method, heuristic, order_atoms, project, use_project, optimize,
+                                external_values, loaded))
 
 
 _used_controls = weakref.WeakSet()  # controls compile_control has grounded

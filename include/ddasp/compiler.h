@@ -61,6 +61,15 @@ struct CompileOptions {
      * atoms collapse into one set. When false, every atom becomes a DD variable.
      */
     bool project_to_shown;
+    /**
+     * Project onto the atoms of the #project statements instead of the shown
+     * atoms when the program has such statements (like clingo's --project;
+     * without #project statements this changes nothing). Every projected atom
+     * becomes a variable of the result, named by its #show name or "__atom<id>";
+     * #show terms whose condition mentions an atom outside the projection are
+     * dropped with a warning (CompileResult::warnings). Requires project_to_shown.
+     */
+    bool use_project_statements;
     /** Keep only the optimal answer sets with respect to the #minimize statements. */
     bool optimize;
     /**
@@ -80,7 +89,7 @@ struct CompileOptions {
 
     CompileOptions()
         : method(Method::Scc), order_heuristic(OrderHeuristic::NaturalName), project_to_shown(true),
-          optimize(false), external_values(false) {}
+          use_project_statements(false), optimize(false), external_values(false) {}
 };
 
 /**
@@ -175,7 +184,10 @@ struct CompileResult {
     std::vector<Atom> var_to_atom;
     /** @brief atom_to_var[a] = DD variable of atom a (0 if the atom has none, see program_atoms()). */
     std::vector<kyotodd::bddvar> atom_to_var;
-    /** @brief Primary atom names (see atom_names()). */
+    /**
+     * @brief Primary atom names (see atom_names()). With use_project_statements,
+     * the projected atoms without a #show name are entered as "__atom<id>".
+     */
     std::map<Atom, std::string> names;
     /**
      * @brief Names shown in every answer set: #show output statements with an empty
@@ -188,6 +200,8 @@ struct CompileResult {
      * can be evaluated on the projected answer sets.
      */
     std::vector<ShowTerm> terms;
+    /** @brief Messages about input that was ignored (e.g. #show terms dropped by #project). */
+    std::vector<std::string> warnings;
 
     /** @brief Name of an atom: its primary #show name, or "__atom<id>" when it has none. */
     std::string atom_name(Atom a) const;
@@ -207,7 +221,8 @@ const size_t kMaxBddVariables = 65536;
  * @brief Compile a program into a ZDD (and BDD) of its answer sets.
  * @throws std::invalid_argument on unsupported input (unknown atom in the order,
  *         when optimizing a #minimize weight outside the 32-bit range, more
- *         variables needed than kMaxBddVariables).
+ *         variables needed than kMaxBddVariables, use_project_statements
+ *         without project_to_shown).
  */
 CompileResult compile(const Program& program, const CompileOptions& options = CompileOptions());
 

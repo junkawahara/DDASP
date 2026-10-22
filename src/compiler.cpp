@@ -981,12 +981,53 @@ private:
     const std::vector<LoadedTarget>* loaded_;
 };
 
+/**
+ * Replace the shown atoms by the atoms of the #project statements (those that
+ * have a DD variable; the others are false anyway). Projected atoms without a
+ * name get "__atom<id>" so that they are displayed, and the terms whose
+ * condition leaves the projection are dropped with a warning.
+ */
+void apply_project_statements(const Program& prog, const std::vector<Atom>& atoms, std::set<Atom>& shown,
+                              CompileResult& res) {
+    std::set<Atom> known(atoms.begin(), atoms.end());
+    shown.clear();
+    for (size_t i = 0; i < prog.projections().size(); ++i) {
+        Atom a = prog.projections()[i];
+        if (!known.count(a)) continue;
+        shown.insert(a);
+        if (!res.names.count(a)) res.names[a] = res.atom_name(a);
+    }
+    std::vector<ShowTerm> kept;
+    size_t dropped = 0;
+    for (size_t t = 0; t < res.terms.size(); ++t) {
+        const std::vector<Literal>& cond = res.terms[t].condition;
+        bool inside = true;
+        for (size_t i = 0; i < cond.size() && inside; ++i) {
+            Atom a = atom_of(cond[i]);
+            inside = shown.count(a) || !known.count(a);  // an atom of no rule is a constant
+        }
+        if (inside) kept.push_back(res.terms[t]);
+        else ++dropped;
+    }
+    if (dropped != 0) {
+        res.warnings.push_back("#project: " + std::to_string(dropped) +
+                               " #show term(s) whose condition mentions an atom outside the projection are not shown");
+    }
+    res.terms = kept;
+}
+
 CompileResult compile_with(const Program& program, const CompileOptions& options,
                            const std::vector<LoadedTarget>* loaded) {
     CompileResult res;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     std::set<Atom> shown = collect_names(program, res);
     std::vector<Atom> atoms = program_atoms(program);
+    if (options.use_project_statements) {
+        if (!options.project_to_shown) {
+            throw std::invalid_argument("use_project_statements (--project) needs projection (not --all-atoms)");
+        }
+        if (!program.projections().empty()) apply_project_statements(program, atoms, shown, res);
+    }
     Spines spines;
     if (loaded) {
         for (size_t d = 0; d < loaded->size(); ++d) spines.push_back((*loaded)[d].atoms);
