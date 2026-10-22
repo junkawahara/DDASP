@@ -407,6 +407,44 @@ optimum: 1
 a
 ```
 
+### コストに上限や下限を付ける(`--cost-le` / `--cost-ge` / `--cost-eq`)
+
+最適解だけでなく「コストが K 以下の解」も族として取り出せます。`--cost-le K` はコストが
+K 以下の解、`--cost-ge K` は K 以上の解、`--cost-eq K` はちょうど K の解を残します
+(`--cost-le` と `--cost-ge` は同時に指定できます。`--cost-eq` と `--opt` は他と併用できません)。
+
+```sh
+./build/ddasp --gringo "$G" --cost-le 2 --enumerate examples/minimize.lp
+```
+
+```
+answer sets: 3
+b
+a
+a c
+```
+
+`+d` と書くと「最適値 + d」の意味になり、最適値も表示されます。`--cost-le +1` は
+「最適値より高々 1 だけ悪い解」です(`--cost-eq +0` は `--opt` と同じ)。
+
+```sh
+./build/ddasp --gringo "$G" --cost-le +1 --enumerate examples/minimize.lp
+```
+
+```
+answer sets: 3
+optimum: 1
+b
+a
+a c
+```
+
+`#minimize` に複数の優先度(`1@2,...` のような `@` 付きの重み)があるときは、`--cost-le 3,5`
+のように優先度の高い順にコンマで並べます(`optimum:` 行と同じ順)。比較は clingo の
+`--opt-mode=enum,3,5` と同じ辞書式です。つまり、上位の優先度のコストが上限より真に小さい解は
+下位のコストに関係なく残り、等しい解だけを次の優先度で比べます。省略した下位の優先度は
+制限されません。`--opt` と同様、コストは `#show` で射影する前の解集合に対して評価されます。
+
 ---
 
 ## 8. さらに例題: 再帰・数え上げ・頂点被覆・ナップサック
@@ -502,7 +540,12 @@ in(2) in(3) in(4) in(6)
 ```
 
 最小サイズは 4 で、そのような被覆は 8 通りあります。「最適解が何通りあるか」を
-数えられるのも DDASP の特長です。
+数えられるのも DDASP の特長です。最適値から 1 だけ悪い解まで含めるなら `--cost-le +1` です。
+
+```sh
+./build/ddasp --gringo "$G" --cost-le +1 examples/vertex_cover.lp    # answer sets: 14, optimum: 4
+./build/ddasp --gringo "$G" --cost-eq +1 examples/vertex_cover.lp    # answer sets: 6  (5 頂点の被覆)
+```
 
 ### 8.4 ナップサック問題と `#sum`(`examples/knapsack.lp`)
 
@@ -563,7 +606,10 @@ ddasp [options] FILE...
 | `--load FILE` | 保存 DD を読み込み、その原子を新しいプログラムの `#external` 原子として使えるようにし、解集合をその族に制限する(複数回指定可) |
 | `--all-atoms` | `#show` による射影をせず、すべての原子を DD の変数にする |
 | `--project` | `#project` 文があれば、表示原子の代わりに `#project` の原子へ射影する(clingo の `--project` 相当。名前のない原子は `__atomN` と表示) |
-| `--opt` | `#minimize` の最適解だけを残す |
+| `--opt` | `#minimize` の最適解だけを残す(`--cost-*` とは併用不可) |
+| `--cost-le K[,K..]` | `#minimize` のコストが K 以下の解だけを残す。優先度ごとに高い順のコンマ区切り(`optimum:` 行の順)で、比較は clingo の `--opt-mode=enum,K,..` と同じ辞書式。省略した下位の優先度は無制限。`+d` は「最適値 + d」(最適値も表示) |
+| `--cost-ge K[,K..]` | コストが K 以上の解だけを残す(書式は同じ。`--cost-le` と併用可) |
+| `--cost-eq K[,K..]` | コストがちょうど K の解だけを残す(書式は同じ。`--cost-le` / `--cost-ge` / `--opt` とは併用不可) |
 | `--external-values` | `#external` 原子を宣言の初期値(`#external a. [true]` など。無印の `#external a.` は false)に固定する。既定では初期値を無視して自由にする |
 | `--method scc\|twocopy` | 安定モデルの構成法(既定 `scc`、`twocopy` は参照実装) |
 | `--order name\|id\|FILE` | 変数順序(既定 `name`。FILE は上から順に並べる原子名(名前のない原子は `__atomN`)の一覧) |
@@ -710,6 +756,9 @@ res.count                     # 4
 
 res = ddasp.compile_files(["examples/minimize.lp"], optimize=True)
 res.count, res.optimum        # (1, [1])
+
+res = ddasp.compile_files(["examples/vertex_cover.lp"], cost_slack=1)
+res.count, res.optimum        # (14, [4])   最適値 + 1 まで(--cost-le +1 相当)
 ```
 
 `compile_text` / `compile_files` の主なキーワード引数:
@@ -721,6 +770,9 @@ res.count, res.optimum        # (1, [1])
 | `order="name"` | `"name"`、`"id"`、または上に置く原子番号のリスト |
 | `project=True` | `False` にすると `--all-atoms` 相当、`"project"` にすると `--project` 相当(`#project` の原子へ射影) |
 | `optimize=False` | `True` で `--opt` 相当 |
+| `cost_le=None` | `--cost-le` 相当。整数(先頭の優先度の上限)または優先度の高い順の整数リスト |
+| `cost_ge=None`, `cost_eq=None` | `--cost-ge` / `--cost-eq` 相当(同じ形式) |
+| `cost_slack=None` | `--cost-le +d` 相当。最適値からの余裕 `d`(非負の整数またはリスト)。`res.optimum` も埋まる |
 | `external_values=False` | `True` で `--external-values` 相当(`#external` の初期値で固定) |
 | `dds=[...]` | `--load` 相当。読み込む保存 DD(`StoredDD`、`Result`、ファイルパス、bytes)のリスト |
 | `node_max=None` | `--node-max` 相当。ノード数の上限(超えると `ddasp.NodeLimitError`)。`None` で無制限 |
@@ -971,6 +1023,11 @@ KyotoDD で直接作った ZDD も `StoredDD.from_zdd` で同じように使え�
 `#show`、`#minimize`、`#external`(初期値は `--external-values` を付けたときだけ使う)、
 `#project`(`--project` を付けたときだけ使う)、assumption(aspif の 6 文、常に制約として使う)に
 対応しています。`#heuristic`、edge、theory は警告を出して無視します。
+
+**Q. 最適解だけでなく、最適値に近い解も見たい。**
+`--cost-le +1` のように `+d` で「最適値 + d 以下」の解が残ります(`optimum:` 行も表示)。
+絶対値なら `--cost-le 5`、下限や等号は `--cost-ge` / `--cost-eq` です(7 章)。Python では
+`cost_slack=1` / `cost_le=5` などを `compile_text` / `compile_files` に渡します(10 章)。
 
 **Q. 仕組みをもっと知りたい。**
 [docs/DESIGN.md](DESIGN.md) に、安定モデル意味論を BDD で構成する方法

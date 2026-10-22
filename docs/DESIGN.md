@@ -172,6 +172,20 @@ optimizing (cost functions themselves are 64-bit). clingo truncates weights
 to 32 bits before DDASP sees them (its observer and gringo's aspif output), so
 `#minimize { 3000000000 : a }` arrives as -1294967296 without a warning.
 
+Cost bounds (`--cost-le` / `--cost-ge` / `--cost-eq K,...`,
+`CompileOptions::cost_le/cost_ge/cost_eq`, Python `cost_le=` etc.) keep the
+sets whose cost vector is lexicographically ≤ / ≥ / = the bound on the levels
+the bound lists, like clingo's `--opt-mode=enum,K,...`: for ≤ the bounded
+levels are processed from the last one up with
+`acc = {cost < b} ∪ ({cost = b} ∩ acc)`, where `{cost < b}` and `{cost ≤ b}`
+are two `cost_bound_le` calls sharing a `CostBoundMemo` (≥ is symmetric with
+`cost_bound_ge`); = chains `cost_bound_eq` over the levels. A relative entry
+`+d` (Python `cost_slack`) is the optimum of its level, computed as `--opt`
+does, plus d, and the optimum is then reported. The bounds apply before
+projection like `--opt`; `--opt` excludes them, `--cost-eq` excludes the other
+two, and a bound with more entries than priority levels (or without any
+`#minimize`) is rejected before compiling.
+
 ## Conversions and deep diagrams
 
 KyotoDD's `BDD::to_zdd` / `ZDD::to_bdd` work on levels, and the binary export
@@ -301,3 +315,8 @@ linear; any other order is still correct, only slower.
   atoms (unnamed ones displayed as `__atomN`, terms leaving the projection dropped with
   a warning); brave/cautious consequences and per-name frequencies are read off the ZDD
   and printed as bare lines; `--node-max` bounds the node table, unlimited by default.
+- 2026-10-22: cost bounds `--cost-le` / `--cost-ge` / `--cost-eq` (Python `cost_le=` /
+  `cost_ge=` / `cost_eq=`, relative upper bound `cost_slack=`): the user chose the
+  lexicographic comparison of clingo's `--opt-mode=enum,K,...` for several priority levels
+  (verified against clingo), relative entries `+d` on top of absolute ones, and the lower
+  and equality bounds alongside the upper one; `--opt` is not combined with them.
