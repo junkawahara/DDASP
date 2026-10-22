@@ -350,6 +350,14 @@ linear; any other order is still correct, only slower.
   vectors (not per-level marginals); projected sets counted once at their smallest cost
   (consistent with the bounds and `answer sets:`); bare `K[,K..] count` lines without
   zero counts; Python dict with tuple keys in ascending order, `None` unless requested.
+- 2026-10-22: `-c NAME=VALUE` (CLI only; Python passes `clingo_args=["-c", "n=8"]`) is forwarded
+  to the grounder as gringo's `-c` and rejected with aspif input (already ground).
+- 2026-10-22: `python/tests/test_random_programs.py` checks ddasp against clingo on a seeded
+  stream of random propositional programs (`DDASP_RANDOM_PROGRAMS`, default 500; both methods ×
+  projection × optimization). Its `#external` atoms occur in no rule head: clingo keeps an
+  external free when every rule with it in the head is a tautology (`a :- a, B`, a body with
+  `l` and `not l`) or is dropped by clasp's propagation (`:- g. a :- g.`), while DDASP counts
+  every head occurrence as a definition.
 - 2026-10-22: cost-ordered enumeration uses both methods (KyotoDD's k-best iterator when
   it applies, peeling otherwise); lines are `K[,K..]: atoms`; `--by-cost` implies
   `--enumerate`; Python offers the lazy `answer_sets(by_cost=True)` (weighted atoms must

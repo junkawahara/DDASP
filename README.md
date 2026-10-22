@@ -47,6 +47,7 @@ The pip `clingo` package has no `gringo` executable; use
 ```sh
 G=".venv/bin/python -m clingo --mode=gringo"
 ./build/ddasp --gringo "$G" examples/queens.lp                  # answer sets: 4
+./build/ddasp --gringo "$G" -c n=8 examples/queens.lp           # 8 queens: 92
 ./build/ddasp --gringo "$G" --enumerate examples/coloring.lp
 ./build/ddasp --gringo "$G" --opt --stats prog.lp
 ./build/ddasp --gringo "$G" --cost-le +1 --enumerate examples/vertex_cover.lp  # optimum + 1
@@ -76,7 +77,9 @@ levels free, like clingo's `--opt-mode=enum,K,...`; `+d` means the optimum
 plus d), `--cost-histogram` (`K[,K...] count` lines: the number of answer sets
 per cost vector, each projected set counted once at its smallest cost),
 `--external-values`, `--method scc|twocopy`, `--order name|id|FILE`,
-`--node-max N` (bound KyotoDD's node table; unlimited by default), `--stats`.
+`-c NAME=VALUE` (define a constant for the grounder, like gringo's `-c`,
+overriding a `#const` in the program; repeatable), `--node-max N` (bound
+KyotoDD's node table; unlimited by default), `--stats`.
 The summary lines `answer sets: N` and (with `--opt` or a relative bound)
 `optimum: ...` are printed by default; `-q` suppresses them and `-q --count`
 prints the bare count.

@@ -304,11 +304,13 @@ b :- not a.
 answer sets: 4
 ```
 
-6 クイーンの解は 4 つです。`--const n=8` をグラウンダに渡すと 8 クイーンになります。
+6 クイーンの解は 4 つです。`-c n=8` を付けると、ファイルを書き換えずに 8 クイーンになります
+(プログラム中の `#const n = 6.` の値をコマンドラインの値で置き換えます。gringo / clingo の
+`-c` と同じで、複数指定できます)。
 
 ```sh
-./build/ddasp --gringo "$G --const n=8" examples/queens.lp     # answer sets: 92
-./build/ddasp --gringo "$G --const n=10" examples/queens.lp    # answer sets: 724
+./build/ddasp --gringo "$G" -c n=8 examples/queens.lp     # answer sets: 92
+./build/ddasp --gringo "$G" -c n=10 examples/queens.lp    # answer sets: 724
 ```
 
 `--stats` を付けると ZDD のノード数や所要時間が標準エラー出力に出ます。
@@ -661,7 +663,8 @@ ddasp [options] FILE...
 | `--external-values` | `#external` 原子を宣言の初期値(`#external a. [true]` など。無印の `#external a.` は false)に固定する。既定では初期値を無視して自由にする |
 | `--method scc\|twocopy` | 安定モデルの構成法(既定 `scc`、`twocopy` は参照実装) |
 | `--order name\|id\|FILE` | 変数順序(既定 `name`。FILE は上から順に並べる原子名(名前のない原子は `__atomN`)の一覧) |
-| `--gringo CMD` | グラウンダのコマンド(`CMD --output=intermediate FILE...` として実行) |
+| `--gringo CMD` | グラウンダのコマンド(`CMD --output=intermediate [-c NAME=VALUE...] FILE...` として実行) |
+| `-c NAME=VALUE` | グラウンダに定数 NAME の値を渡す(gringo の `-c` と同じ。プログラム中の `#const NAME = ...` より優先。複数指定可。`.aspif` 入力では使えない) |
 | `--node-max N` | KyotoDD のノード表を N ノードまでに制限する。超えるとメモリを使い切る代わりに明確なエラーで終了(既定は無制限) |
 | `--stats` | ノード数と所要時間を標準エラー出力に表示 |
 | `-q`, `--quiet` | `answer sets: N` と `optimum: ...` の行を表示しない |
