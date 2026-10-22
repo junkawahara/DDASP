@@ -5,8 +5,9 @@ import pytest
 ddasp = pytest.importorskip("ddasp")
 kyotodd = pytest.importorskip("kyotodd")
 
-from conftest import clingo_answer_sets, clingo_optimum  # noqa: E402
-from test_against_clingo import INLINE_PROGRAMS, OPT_PROGRAMS, STANDALONE_EXAMPLES  # noqa: E402
+from conftest import clingo_answer_sets, clingo_costed_answer_sets, clingo_optimum  # noqa: E402
+from test_against_clingo import (INLINE_PROGRAMS, OPT_PROGRAMS, STANDALONE_EXAMPLES,  # noqa: E402
+                                 cost_bound_cases, lex_within)
 
 
 def _write(tmp_path, name, programs=INLINE_PROGRAMS):
@@ -46,6 +47,47 @@ def test_optimize(tmp_path, name):
     assert (res.optimum or None) == expected
     if expected is not None:
         assert len(res.costs) == len(expected)
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_cost_bounds(tmp_path, name):
+    path = _write(tmp_path, name, OPT_PROGRAMS)
+    text = OPT_PROGRAMS[name]
+    models = clingo_costed_answer_sets([path])
+    costs = sorted({c for _, c in models})
+    for bound in cost_bound_cases(costs):
+        for relation in ("le", "ge", "eq"):
+            res = ddasp.compile_text(text, **{f"cost_{relation}": list(bound)})
+            assert set(res.answer_sets()) == {s for s, c in models if lex_within(c, bound, relation)}, (bound, relation)
+            assert res.optimum == []  # an absolute bound does not report the optimum
+        res = ddasp.compile_text(text, cost_le=bound[0])  # a bare int bounds the first level
+        assert set(res.answer_sets()) == {s for s, c in models if lex_within(c, bound[:1], "le")}
+    optimum = clingo_optimum([path])
+    if optimum is None:
+        res = ddasp.compile_text(text, cost_slack=1)
+        assert res.count == 0 and res.optimum == []
+        return
+    res = ddasp.compile_text(text, cost_slack=[1] * len(optimum))
+    assert res.optimum == optimum
+    bound = tuple(o + 1 for o in optimum)
+    assert set(res.answer_sets()) == {s for s, c in models if lex_within(c, bound, "le")}
+    best = ddasp.compile_text(text, cost_slack=[0] * len(optimum))  # optimize=True
+    assert set(best.answer_sets()) == set(ddasp.compile_text(text, optimize=True).answer_sets())
+    both = ddasp.compile_text(text, cost_ge=optimum[0] + 1, cost_slack=1)  # cost_ge combines with cost_slack
+    assert set(both.answer_sets()) == {s for s, c in models if c[0] == optimum[0] + 1}
+    assert both.optimum == optimum
+
+
+def test_cost_bound_arguments():
+    text = OPT_PROGRAMS["two_levels"]
+    for kwargs in (dict(optimize=True, cost_le=1), dict(cost_le=1, cost_slack=0), dict(cost_eq=1, cost_ge=0),
+                   dict(cost_eq=[1], cost_slack=[0]), dict(cost_le=[1, 2, 3]), dict(cost_le="1"),
+                   dict(cost_le=True), dict(cost_ge=[1, None]), dict(cost_slack=-1), dict(cost_slack=[0, -1])):
+        with pytest.raises(ValueError):
+            ddasp.compile_text(text, **kwargs)
+    with pytest.raises(ValueError):
+        ddasp.compile_text("{ a }.", cost_le=1)  # no #minimize statement
+    assert ddasp.compile_text(text, cost_le=[], cost_ge=None).count == ddasp.compile_text(text).count
 
 
 def test_program_builder_and_aspif():

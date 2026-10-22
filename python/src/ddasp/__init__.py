@@ -189,6 +189,11 @@ class Result:
 
     @property
     def optimum(self) -> List[int]:
+        """Optimal #minimize cost per priority level, most important first.
+
+        Filled by ``optimize=True`` and by ``cost_slack`` (on a consistent program);
+        empty otherwise.
+        """
         return list(self._core.optimum)
 
     @property
@@ -451,6 +456,18 @@ def _stored_list(dds) -> List[StoredDD]:
     return [_as_stored(dd) for dd in dds]
 
 
+def _cost_bound(name: str, value, non_negative: bool = False) -> List[int]:
+    """A cost bound argument as a list of ints, one per priority level (``None`` or ``[]``: no bound)."""
+    if value is None:
+        return []
+    entries = list(value) if isinstance(value, (list, tuple)) else [value]
+    if any(isinstance(k, bool) or not isinstance(k, int) for k in entries):
+        raise ValueError(f"{name}: expected an int or a list of ints (one per #minimize priority level), got {value!r}")
+    if non_negative and any(k < 0 for k in entries):
+        raise ValueError(f"{name}: expected non-negative entries, got {value!r}")
+    return entries
+
+
 def compile(
     program: Program,
     method: str = "scc",
@@ -460,6 +477,10 @@ def compile(
     external_values: bool = False,
     dds: Iterable = (),
     node_max: Optional[int] = None,
+    cost_le: Union[int, Sequence[int], None] = None,
+    cost_ge: Union[int, Sequence[int], None] = None,
+    cost_eq: Union[int, Sequence[int], None] = None,
+    cost_slack: Union[int, Sequence[int], None] = None,
 ) -> Result:
     """Compile a :class:`Program`.
 
@@ -490,6 +511,21 @@ def compile(
                      compilation; :class:`NodeLimitError` is raised when the diagrams
                      need more. ``None`` (default): unlimited (a huge intermediate
                      diagram then uses all the memory of the machine).
+    :param cost_le: keep only the answer sets whose ``#minimize`` cost vector (one cost
+                    per priority level, most important first, as in :attr:`Result.optimum`)
+                    is lexicographically at most this bound: an int bounds the first
+                    level, a list bounds the first ``len(list)`` levels (the lower levels
+                    stay free), like clingo's ``--opt-mode=enum,K,...``. Like ``optimize``,
+                    the bound applies before projection.
+    :param cost_ge: keep only the answer sets whose cost vector is at least this bound
+                    (same form; combines with ``cost_le`` or ``cost_slack``).
+    :param cost_eq: keep only the answer sets whose cost vector equals this bound on the
+                    levels it lists (same form; not with the other bounds).
+    :param cost_slack: an upper bound relative to the optimum: ``d`` or ``[d1, d2, ...]``
+                       (non-negative ints) keeps the answer sets whose cost vector is at
+                       most the optimum plus the slack, level by level, and fills
+                       :attr:`Result.optimum`. ``cost_slack=0`` on every level is
+                       ``optimize=True``. Not with ``cost_le`` or ``optimize``.
     """
     if isinstance(order, str):
         heuristic, order_atoms = order, []
@@ -504,8 +540,17 @@ def compile(
         raise ValueError(f"project: expected True, False or 'project', got {project!r}")
     if node_max is not None and (not isinstance(node_max, int) or node_max <= 0):
         raise ValueError(f"node_max: expected a positive integer or None, got {node_max!r}")
+    le, ge, eq = _cost_bound("cost_le", cost_le), _cost_bound("cost_ge", cost_ge), _cost_bound("cost_eq", cost_eq)
+    slack = _cost_bound("cost_slack", cost_slack, non_negative=True)
+    if optimize and (le or ge or eq or slack):
+        raise ValueError("optimize=True cannot be combined with a cost bound (cost_slack=0 keeps the optimal answer sets)")
+    if le and slack:
+        raise ValueError("cost_le and cost_slack cannot be combined (both are upper bounds)")
+    if eq and (le or ge or slack):
+        raise ValueError("cost_eq cannot be combined with cost_le, cost_ge or cost_slack")
     return Result(_core_compile(program, method, heuristic, order_atoms, project, use_project, optimize,
-                                external_values, loaded, node_max or 0))
+                                external_values, loaded, node_max or 0, cost_le=le, cost_ge=ge, cost_eq=eq,
+                                cost_slack=slack))
 
 
 _used_controls = weakref.WeakSet()  # controls compile_control has grounded

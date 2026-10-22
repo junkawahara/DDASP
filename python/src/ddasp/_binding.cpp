@@ -207,9 +207,18 @@ StoredDDData parse_stored(const std::string& bytes) {
     }
 }
 
+/** Cost bound entries of one kind (see CompileOptions::cost_le). */
+std::vector<CostBound> cost_bounds(const std::vector<long long>& values, bool relative) {
+    std::vector<CostBound> b;
+    for (size_t i = 0; i < values.size(); ++i) b.push_back(CostBound(values[i], relative));
+    return b;
+}
+
 Result compile_py(const Program& program, const std::string& method, const std::string& order_heuristic,
                   const std::vector<int>& order, bool project, bool use_project_statements, bool optimize,
-                  bool external_values, const std::vector<py::bytes>& loaded, uint64_t node_max) {
+                  bool external_values, const std::vector<py::bytes>& loaded, uint64_t node_max,
+                  const std::vector<long long>& cost_le, const std::vector<long long>& cost_ge,
+                  const std::vector<long long>& cost_eq, const std::vector<long long>& cost_slack) {
     CompileOptions opts;
     opts.method = parse_method(method);
     opts.order_heuristic = parse_order_heuristic(order_heuristic);
@@ -218,6 +227,10 @@ Result compile_py(const Program& program, const std::string& method, const std::
     opts.use_project_statements = use_project_statements;
     opts.optimize = optimize;
     opts.external_values = external_values;
+    if (!cost_le.empty() && !cost_slack.empty()) throw py::value_error("cost_le and cost_slack cannot be combined");
+    opts.cost_le = cost_slack.empty() ? cost_bounds(cost_le, false) : cost_bounds(cost_slack, true);
+    opts.cost_ge = cost_bounds(cost_ge, false);
+    opts.cost_eq = cost_bounds(cost_eq, false);
     std::vector<StoredDDData> stored;
     for (size_t i = 0; i < loaded.size(); ++i) stored.push_back(parse_stored(std::string(loaded[i])));
 
@@ -364,9 +377,14 @@ PYBIND11_MODULE(_core, m) {
           py::arg("order_atoms") = std::vector<int>(), py::arg("project") = true,
           py::arg("use_project_statements") = false, py::arg("optimize") = false,
           py::arg("external_values") = false, py::arg("loaded") = std::vector<py::bytes>(),
-          py::arg("node_max") = static_cast<uint64_t>(0),
+          py::arg("node_max") = static_cast<uint64_t>(0), py::arg("cost_le") = std::vector<long long>(),
+          py::arg("cost_ge") = std::vector<long long>(), py::arg("cost_eq") = std::vector<long long>(),
+          py::arg("cost_slack") = std::vector<long long>(),
           "Compile a Program into decision diagrams of its answer sets; `loaded` holds stored DD file images, "
-          "`node_max` limits KyotoDD's node table (0 = unlimited; NodeLimitError when reached).");
+          "`node_max` limits KyotoDD's node table (0 = unlimited; NodeLimitError when reached); `cost_le`, "
+          "`cost_ge` and `cost_eq` bound the #minimize cost vector lexicographically (one entry per priority "
+          "level, most important first) and `cost_slack` is an upper bound relative to the optimum, which is "
+          "then reported.");
     py::register_exception<NodeLimitError>(m, "NodeLimitError", PyExc_RuntimeError);
 
     m.def("stored_dd_parts",
