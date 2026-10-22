@@ -27,6 +27,7 @@
 #include "ddasp/aspif_reader.h"
 #include "ddasp/compiler.h"
 #include "ddasp/consequences.h"
+#include "ddasp/cost_order.h"
 #include "ddasp/dd_util.h"
 #include "ddasp/stored_dd.h"
 
@@ -43,6 +44,7 @@ struct Options {
     std::vector<std::string> load_files;  // --load
     bool count = false;
     bool enumerate = false;
+    bool by_cost = false;
     bool brave = false;
     bool cautious = false;
     bool frequencies = false;
@@ -77,7 +79,11 @@ void usage(std::ostream& os) {
           "  --enumerate        print every answer set (one per line, shown atoms in\n"
           "                     variable-order, i.e. name order)\n"
           "  --limit N          print at most N answer sets with --enumerate (0 = all)\n"
-          "  --brave            print the brave consequences (the names displayed by\n"
+          "  --by-cost          enumerate in ascending #minimize cost order (implies\n"
+          "                     --enumerate), one `K[,K..]: atoms` line per answer set;\n"
+          "                     after projection a set is listed once, at the smallest\n"
+          "                     cost of the answer sets it stands for; --limit N gives\n"
+          "                     the N best\n"          "  --brave            print the brave consequences (the names displayed by\n"
           "                     some answer set) on one line, like an answer set\n"
           "  --cautious         print the cautious consequences (the names displayed\n"
           "                     by every answer set; nothing if there is none)\n"
@@ -175,6 +181,9 @@ bool parse_args(int argc, char** argv, Options& opt) {
         } else if (a == "--count") {
             opt.count = true;
         } else if (a == "--enumerate") {
+            opt.enumerate = true;
+        } else if (a == "--by-cost") {
+            opt.by_cost = true;
             opt.enumerate = true;
         } else if (a == "--brave") {
             opt.brave = true;
@@ -437,6 +446,9 @@ int main(int argc, char** argv) {
         std::vector<std::string> warnings;
         Program program = load_program(opt, declarations, warnings);
         for (size_t i = 0; i < warnings.size(); ++i) std::cerr << "ddasp: warning: " << warnings[i] << "\n";
+        if (opt.by_cost && program.minimizes().empty()) {
+            throw std::runtime_error("--by-cost needs a #minimize statement, but the program has none");
+        }
         double t_load = seconds_since(t0);
 
         // Initial table of 65536 nodes (or the limit, if smaller); unlimited growth unless --node-max.
@@ -540,15 +552,25 @@ int main(int argc, char** argv) {
             // Streamed from the ZDD: --limit stops early without expanding the family.
             size_t printed = 0;
             size_t limit = opt.enumerate_limit;
-            for_each_set(res.zdd, [&](const std::vector<kyotodd::bddvar>& set) -> bool {
+            auto print_set = [&](const std::string& prefix, const std::vector<kyotodd::bddvar>& set) -> bool {
                 std::vector<Atom> atoms;  // top level first = variable order
                 for (size_t j = 0; j < set.size(); ++j) atoms.push_back(res.var_to_atom[set[j]]);
                 std::vector<std::string> shown = res.shown_names(atoms);
-                for (size_t j = 0; j < shown.size(); ++j) std::cout << (j ? " " : "") << shown[j];
+                std::cout << prefix;
+                for (size_t j = 0; j < shown.size(); ++j) std::cout << (j || !prefix.empty() ? " " : "") << shown[j];
                 std::cout << "\n";
                 ++printed;
                 return limit == 0 || printed < limit;
-            });
+            };
+            if (opt.by_cost) {  // `K[,K..]: atoms`, best first
+                enumerate_by_cost(res, [&](const std::vector<long long>& cost, const std::vector<kyotodd::bddvar>& set) -> bool {
+                    std::string prefix;
+                    for (size_t c = 0; c < cost.size(); ++c) prefix += (c ? "," : "") + std::to_string(cost[c]);
+                    return print_set(prefix + ":", set);
+                });
+            } else {
+                for_each_set(res.zdd, [&](const std::vector<kyotodd::bddvar>& set) -> bool { return print_set("", set); });
+            }
         }
 
         if (!opt.output.empty()) {

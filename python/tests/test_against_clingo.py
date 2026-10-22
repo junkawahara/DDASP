@@ -249,6 +249,58 @@ def test_cost_histogram_matches_clingo(ddasp_bin, tmp_path, name):
         assert parse_histogram(out) == expected_histogram(models, True, lambda c: lex_within(c, mid, "ge"))
 
 
+def expected_by_cost(models, project):
+    """``--by-cost`` lines as a multiset of (cost vector, shown set).
+
+    With ``project`` every shown set appears once, at the smallest cost vector of
+    the answer sets projecting to it; otherwise every answer set appears.
+    """
+    if project:
+        smallest = {}
+        for shown, cost in models:
+            if shown not in smallest or cost < smallest[shown]:
+                smallest[shown] = cost
+        return Counter((cost, shown) for shown, cost in smallest.items())
+    return Counter((cost, shown) for shown, cost in models)
+
+
+def parse_by_cost(out):
+    rows = []
+    for line in out.splitlines():
+        cost, sep, names = line.partition(":")
+        assert sep == ":", line
+        rows.append((tuple(int(k) for k in cost.split(",")), frozenset(names.split())))
+    return rows
+
+
+@pytest.mark.parametrize("name", sorted(OPT_PROGRAMS))
+def test_by_cost_matches_clingo(ddasp_bin, tmp_path, name):
+    path = tmp_path / f"{name}.lp"
+    path.write_text(OPT_PROGRAMS[name])
+    models = clingo_costed_answer_sets([path])
+    for extra in ((), ("--all-atoms",)):
+        out, _ = run_ddasp(ddasp_bin, [path], "-q", "--by-cost", *extra)
+        rows = parse_by_cost(out)
+        assert [cost for cost, _ in rows] == sorted(cost for cost, _ in rows)
+        assert Counter(rows) == expected_by_cost(models, project=not extra)
+        out3, _ = run_ddasp(ddasp_bin, [path], "-q", "--by-cost", "--limit", "3", *extra)  # the 3 best
+        assert out3.splitlines() == out.splitlines()[:3]
+        same, _ = run_ddasp(ddasp_bin, [path], "-q", "--enumerate", "--by-cost", *extra)
+        assert same == out
+    costs = sorted({cost for _, cost in models})
+    if costs:  # --opt and the bounds restrict the listing; the summary lines come first
+        out, _ = run_ddasp(ddasp_bin, [path], "--opt", "--by-cost")
+        lines = out.splitlines()
+        assert lines[0].startswith("answer sets:") and lines[1].startswith("optimum:")
+        best = parse_by_cost("\n".join(lines[2:]))
+        assert {cost for cost, _ in best} == {tuple(clingo_optimum([path]))}
+        assert len(best) == int(lines[0].split()[-1])
+        mid = costs[len(costs) // 2]
+        out, _ = run_ddasp(ddasp_bin, [path], "-q", "--by-cost", "--cost-ge", ",".join(map(str, mid)))
+        kept = [(shown, cost) for shown, cost in models if lex_within(cost, mid, "ge")]
+        assert Counter(parse_by_cost(out)) == expected_by_cost(kept, project=True)
+
+
 def test_cost_bound_errors(ddasp_bin, tmp_path):
     path = tmp_path / "simple.lp"
     path.write_text(OPT_PROGRAMS["simple"])  # two priority levels (1 and 0)
@@ -264,7 +316,7 @@ def test_cost_bound_errors(ddasp_bin, tmp_path):
     assert proc.returncode == 1 and "only 2 #minimize priority level(s)" in proc.stderr
     plain = tmp_path / "plain.lp"
     plain.write_text("{ a }.")
-    for option in (["--cost-le", "1"], ["--cost-histogram"]):
+    for option in (["--cost-le", "1"], ["--cost-histogram"], ["--by-cost"]):
         proc = subprocess.run([str(ddasp_bin), "--gringo", GRINGO_CMD, *option, str(plain)],
                               capture_output=True, text=True)
         assert proc.returncode == 1 and "#minimize" in proc.stderr, option
