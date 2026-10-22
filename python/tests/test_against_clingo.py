@@ -1,5 +1,6 @@
 """Compare ddasp's answer sets with clingo's enumeration."""
 
+import json
 import subprocess
 from collections import Counter
 from pathlib import Path
@@ -532,3 +533,36 @@ def test_constants_are_passed_to_the_grounder(ddasp_bin, tmp_path):
     aspif.write_text("asp 1 0 0\n0\n")
     proc = subprocess.run([str(ddasp_bin), "-c", "n=3", str(aspif)], capture_output=True, text=True)
     assert proc.returncode != 0 and "aspif" in proc.stderr
+
+
+def test_json_output(ddasp_bin, tmp_path):
+    path = tmp_path / "p.lp"
+    path.write_text('{ a; b; c }. :- a, b. #minimize { 1,a : a; 2,b : b; 1,c : c }. '
+                    '#show a/0. #show b/0. #show c/0. #show s("x\\"y") : c.')
+    out, _ = run_ddasp(ddasp_bin, [path], "--json", "--enumerate", "--brave", "--cautious", "--frequencies",
+                       "--cost-histogram", "--stats")
+    data = json.loads(out)
+    text, _ = run_ddasp(ddasp_bin, [path], "-q", "--enumerate")
+    sets = sorted(sorted(line.split()) for line in text.splitlines())
+    assert sorted(sorted(s) for s in data["answer_sets"]) == sets
+    assert data["count"] == len(sets) == 6
+    assert "optimum" not in data
+    assert set(data["brave"]) == {"a", "b", "c", 's("x\\"y")'}  # the quotes of the name are escaped
+    assert data["cautious"] == []
+    freq, _ = run_ddasp(ddasp_bin, [path], "-q", "--frequencies")
+    assert data["frequencies"] == {l.rsplit(maxsplit=1)[0]: int(l.rsplit(maxsplit=1)[1]) for l in freq.splitlines()}
+    hist, _ = run_ddasp(ddasp_bin, [path], "-q", "--cost-histogram")
+    assert data["cost_histogram"] == [{"cost": [int(k) for k in l.split()[0].split(",")], "count": int(l.split()[1])}
+                                      for l in hist.splitlines()]
+    assert data["stats"]["rules"] >= 1 and data["stats"]["shown_atoms"] == 3 and "compile_time" in data["stats"]
+    assert list(data) == ["count", "brave", "cautious", "frequencies", "cost_histogram", "stats", "answer_sets"]
+    # --by-cost gives {cost, atoms} objects, best first; --limit applies; -q and --count change nothing.
+    out, _ = run_ddasp(ddasp_bin, [path], "--json", "--by-cost", "--limit", "2", "--cost-le", "+1", "-q", "--count")
+    data = json.loads(out)
+    assert data["count"] == 3 and data["optimum"] == [0]
+    assert data["answer_sets"][0] == {"cost": [0], "atoms": []}
+    assert data["answer_sets"][1]["cost"] == [1] and len(data["answer_sets"]) == 2
+    # An inconsistent program and an empty enumeration are valid JSON too.
+    path.write_text("a. :- a. #show a/0.")
+    out, _ = run_ddasp(ddasp_bin, [path], "--json", "--enumerate", "--cautious")
+    assert json.loads(out) == {"count": 0, "cautious": [], "answer_sets": []}

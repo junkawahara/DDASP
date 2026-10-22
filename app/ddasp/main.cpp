@@ -51,6 +51,7 @@ struct Options {
     bool frequencies = false;
     bool cost_histogram = false;
     bool stats = false;
+    bool json = false;
     bool quiet = false;
     bool export_bdd = false;
     bool all_atoms = false;
@@ -133,6 +134,11 @@ void usage(std::ostream& os) {
           "                     a clear error instead of using all memory when the\n"
           "                     diagrams need more (default: unlimited)\n"
           "  --stats            print node counts and timings to stderr\n"
+          "  --json             print the results as one JSON object instead of text:\n"
+          "                     count, optimum, and the items requested by --brave,\n"
+          "                     --cautious, --frequencies, --cost-histogram, --stats and\n"
+          "                     --enumerate (answer_sets, written as they are found; with\n"
+          "                     --by-cost as {cost, atoms} objects); -q and --count are ignored\n"
           "  -q, --quiet        do not print the summary lines\n"
           "  -h, --help         show this help\n";
 }
@@ -252,6 +258,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
             opt.constants.push_back(v);
         } else if (a == "--gringo") {
             opt.gringo = need_value("--gringo");
+        } else if (a == "--json") {
+            opt.json = true;
         } else if (a == "--stats") {
             opt.stats = true;
         } else if (a == "-q" || a == "--quiet") {
@@ -429,6 +437,93 @@ std::vector<Atom> read_order_file(const std::string& path, const Program& progra
     return order;
 }
 
+/** One `label: value` line of --stats (times in seconds); also a field of the JSON output. */
+struct StatItem {
+    std::string label;
+    std::string value;
+    bool seconds;
+    StatItem() : seconds(false) {}
+    /** JSON key: the label with underscores for spaces. */
+    std::string key() const {
+        std::string k = label;
+        for (size_t i = 0; i < k.size(); ++i) {
+            if (k[i] == ' ') k[i] = '_';
+        }
+        return k;
+    }
+};
+
+StatItem stat_count(const char* label, uint64_t value) {
+    StatItem item;
+    item.label = label;
+    item.value = std::to_string(value);
+    return item;
+}
+
+StatItem stat_seconds(const char* label, double value) {
+    StatItem item;
+    item.label = label;
+    std::ostringstream s;
+    s << value;
+    item.value = s.str();
+    item.seconds = true;
+    return item;
+}
+
+/** A JSON string literal: quotes, backslashes and control characters escaped, other bytes as they are. */
+std::string json_string(const std::string& s) {
+    std::string out = "\"";
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out += static_cast<char>(c);
+                }
+        }
+    }
+    return out + "\"";
+}
+
+void json_strings(std::ostream& os, const std::vector<std::string>& v) {
+    os << "[";
+    for (size_t i = 0; i < v.size(); ++i) os << (i ? ", " : "") << json_string(v[i]);
+    os << "]";
+}
+
+void json_numbers(std::ostream& os, const std::vector<long long>& v) {
+    os << "[";
+    for (size_t i = 0; i < v.size(); ++i) os << (i ? ", " : "") << v[i];
+    os << "]";
+}
+
+/** Writes the fields of the one JSON object of --json: `field(key)` then the value by the caller. */
+struct JsonWriter {
+    std::ostream& os;
+    bool first;
+    explicit JsonWriter(std::ostream& o) : os(o), first(true) {}
+    void open() { os << "{"; }
+    void field(const char* key) {
+        os << (first ? "\n  " : ",\n  ") << json_string(key) << ": ";
+        first = false;
+    }
+    void close() { os << "\n}\n"; }
+};
+
+void print_names_line(const std::vector<std::string>& names) {
+    for (size_t i = 0; i < names.size(); ++i) std::cout << (i ? " " : "") << names[i];
+    std::cout << "\n";
+}
+
 typedef std::chrono::steady_clock Clock;
 
 double seconds_since(Clock::time_point t0) {
@@ -499,95 +594,170 @@ int main(int argc, char** argv) {
         double t_compile = seconds_since(t1);
         for (size_t i = 0; i < res.warnings.size(); ++i) std::cerr << "ddasp: warning: " << res.warnings[i] << "\n";
 
+        // Statistics: stderr lines, and the "stats" object of --json.
+        std::vector<StatItem> stat_items;
         if (opt.stats) {
             const CompileStats& st = res.stats;
-            std::cerr << "rules: " << program.rules().size() << "\n"
-                      << "tautological rules: " << st.simplified_rules << "\n"
-                      << "atoms: " << st.atoms << "\n"
-                      << "shown atoms: " << res.vars.size() << "\n"
-                      << "aux vars: " << st.aux_vars << "\n"
-                      << "groups: " << st.groups << "\n"
-                      << "models nodes: " << st.models_nodes << "\n"
-                      << "stable nodes: " << st.stable_nodes << "\n"
-                      << "zdd nodes: " << res.zdd.raw_size() << "\n"
-                      << "bdd nodes: " << res.bdd.raw_size() << "\n"
-                      << "peak table nodes: " << st.peak_nodes << "\n";
+            stat_items.push_back(stat_count("rules", program.rules().size()));
+            stat_items.push_back(stat_count("tautological rules", st.simplified_rules));
+            stat_items.push_back(stat_count("atoms", st.atoms));
+            stat_items.push_back(stat_count("shown atoms", res.vars.size()));
+            stat_items.push_back(stat_count("aux vars", st.aux_vars));
+            stat_items.push_back(stat_count("groups", st.groups));
+            stat_items.push_back(stat_count("models nodes", st.models_nodes));
+            stat_items.push_back(stat_count("stable nodes", st.stable_nodes));
+            stat_items.push_back(stat_count("zdd nodes", res.zdd.raw_size()));
+            stat_items.push_back(stat_count("bdd nodes", res.bdd.raw_size()));
+            stat_items.push_back(stat_count("peak table nodes", st.peak_nodes));
             if (!loaded.empty()) {
-                std::cerr << "loaded dds: " << st.loaded_dds << "\n"
-                          << "synthesized atoms: " << st.synthesized_atoms << "\n";
+                stat_items.push_back(stat_count("loaded dds", st.loaded_dds));
+                stat_items.push_back(stat_count("synthesized atoms", st.synthesized_atoms));
             }
-            std::cerr << "load time: " << t_load << " s\n"
-                      << "order time: " << st.order_time << " s\n"
-                      << "models time: " << st.models_time << " s\n"
-                      << "supported time: " << st.supported_time << " s\n"
-                      << "loaded dd time: " << st.load_time << " s\n"
-                      << "conjoin time: " << st.conjoin_time << " s\n"
-                      << "unfounded time: " << st.unfounded_time << " s\n"
-                      << "convert time: " << st.convert_time << " s\n"
-                      << "optimize time: " << st.optimize_time << " s\n"
-                      << "histogram time: " << st.histogram_time << " s\n"
-                      << "project time: " << st.project_time << " s\n"
-                      << "compile time: " << t_compile << " s\n";
+            stat_items.push_back(stat_seconds("load time", t_load));
+            stat_items.push_back(stat_seconds("order time", st.order_time));
+            stat_items.push_back(stat_seconds("models time", st.models_time));
+            stat_items.push_back(stat_seconds("supported time", st.supported_time));
+            stat_items.push_back(stat_seconds("loaded dd time", st.load_time));
+            stat_items.push_back(stat_seconds("conjoin time", st.conjoin_time));
+            stat_items.push_back(stat_seconds("unfounded time", st.unfounded_time));
+            stat_items.push_back(stat_seconds("convert time", st.convert_time));
+            stat_items.push_back(stat_seconds("optimize time", st.optimize_time));
+            stat_items.push_back(stat_seconds("histogram time", st.histogram_time));
+            stat_items.push_back(stat_seconds("project time", st.project_time));
+            stat_items.push_back(stat_seconds("compile time", t_compile));
+            for (size_t i = 0; i < stat_items.size(); ++i) {
+                std::cerr << stat_items[i].label << ": " << stat_items[i].value << (stat_items[i].seconds ? " s" : "") << "\n";
+            }
         }
 
         bigint::BigInt count = res.zdd.exact_count();
-        if (!opt.quiet) std::cout << "answer sets: " << count.to_string() << "\n";
-        else if (opt.count) std::cout << count.to_string() << "\n";
-        if (!opt.quiet && !res.optimum.empty()) {  // --opt or a relative cost bound
-            std::cout << "optimum:";
-            for (size_t i = 0; i < res.optimum.size(); ++i) std::cout << ' ' << res.optimum[i];
-            std::cout << "\n";
+        JsonWriter json(std::cout);
+        if (opt.json) {
+            json.open();
+            json.field("count");
+            std::cout << count.to_string();
+            if (!res.optimum.empty()) {  // --opt or a relative cost bound
+                json.field("optimum");
+                json_numbers(std::cout, res.optimum);
+            }
+        } else {
+            if (!opt.quiet) std::cout << "answer sets: " << count.to_string() << "\n";
+            else if (opt.count) std::cout << count.to_string() << "\n";
+            if (!opt.quiet && !res.optimum.empty()) {  // --opt or a relative cost bound
+                std::cout << "optimum:";
+                for (size_t i = 0; i < res.optimum.size(); ++i) std::cout << ' ' << res.optimum[i];
+                std::cout << "\n";
+            }
         }
 
         if (opt.brave || opt.cautious || opt.frequencies) {
             std::vector<NameCount> freq = name_frequencies(res);
             if (opt.brave) {
                 std::vector<std::string> names = brave_consequences(freq);
-                for (size_t i = 0; i < names.size(); ++i) std::cout << (i ? " " : "") << names[i];
-                std::cout << "\n";
+                if (opt.json) {
+                    json.field("brave");
+                    json_strings(std::cout, names);
+                } else {
+                    print_names_line(names);
+                }
             }
             if (opt.cautious) {
                 std::vector<std::string> names = cautious_consequences(freq, count);
-                for (size_t i = 0; i < names.size(); ++i) std::cout << (i ? " " : "") << names[i];
-                std::cout << "\n";
+                if (opt.json) {
+                    json.field("cautious");
+                    json_strings(std::cout, names);
+                } else {
+                    print_names_line(names);
+                }
             }
             if (opt.frequencies) {
-                for (size_t i = 0; i < freq.size(); ++i) std::cout << freq[i].name << ' ' << freq[i].count.to_string() << "\n";
+                if (opt.json) {
+                    json.field("frequencies");
+                    std::cout << "{";
+                    for (size_t i = 0; i < freq.size(); ++i) {
+                        std::cout << (i ? ", " : "") << json_string(freq[i].name) << ": " << freq[i].count.to_string();
+                    }
+                    std::cout << "}";
+                } else {
+                    for (size_t i = 0; i < freq.size(); ++i) std::cout << freq[i].name << ' ' << freq[i].count.to_string() << "\n";
+                }
             }
         }
 
         if (opt.cost_histogram) {
+            if (opt.json) {
+                json.field("cost_histogram");
+                std::cout << "[";
+            }
             for (size_t i = 0; i < res.cost_histogram.size(); ++i) {
                 const CostCount& entry = res.cost_histogram[i];
-                for (size_t c = 0; c < entry.cost.size(); ++c) std::cout << (c ? "," : "") << entry.cost[c];
-                std::cout << ' ' << entry.count.to_string() << "\n";
+                if (opt.json) {
+                    std::cout << (i ? ", " : "") << "{\"cost\": ";
+                    json_numbers(std::cout, entry.cost);
+                    std::cout << ", \"count\": " << entry.count.to_string() << "}";
+                } else {
+                    for (size_t c = 0; c < entry.cost.size(); ++c) std::cout << (c ? "," : "") << entry.cost[c];
+                    std::cout << ' ' << entry.count.to_string() << "\n";
+                }
             }
+            if (opt.json) std::cout << "]";
+        }
+
+        if (opt.json && opt.stats) {
+            json.field("stats");
+            std::cout << "{";
+            for (size_t i = 0; i < stat_items.size(); ++i) {
+                std::cout << (i ? ", " : "") << json_string(stat_items[i].key()) << ": " << stat_items[i].value;
+            }
+            std::cout << "}";
         }
 
         if (opt.enumerate) {
             // Streamed from the ZDD: --limit stops early without expanding the family.
             size_t printed = 0;
             size_t limit = opt.enumerate_limit;
-            auto print_set = [&](const std::string& prefix, const std::vector<kyotodd::bddvar>& set) -> bool {
+            auto emit_set = [&](const std::vector<long long>* cost, const std::vector<kyotodd::bddvar>& set) -> bool {
                 std::vector<Atom> atoms;  // top level first = variable order
                 for (size_t j = 0; j < set.size(); ++j) atoms.push_back(res.var_to_atom[set[j]]);
                 std::vector<std::string> shown = res.shown_names(atoms);
-                std::cout << prefix;
-                for (size_t j = 0; j < shown.size(); ++j) std::cout << (j || !prefix.empty() ? " " : "") << shown[j];
-                std::cout << "\n";
+                if (opt.json) {
+                    std::cout << (printed ? ",\n    " : "\n    ");
+                    if (cost) {
+                        std::cout << "{\"cost\": ";
+                        json_numbers(std::cout, *cost);
+                        std::cout << ", \"atoms\": ";
+                        json_strings(std::cout, shown);
+                        std::cout << "}";
+                    } else {
+                        json_strings(std::cout, shown);
+                    }
+                } else {
+                    std::string prefix;  // `K[,K..]:` with --by-cost
+                    if (cost) {
+                        for (size_t c = 0; c < cost->size(); ++c) prefix += (c ? "," : "") + std::to_string((*cost)[c]);
+                        prefix += ":";
+                    }
+                    std::cout << prefix;
+                    for (size_t j = 0; j < shown.size(); ++j) std::cout << (j || !prefix.empty() ? " " : "") << shown[j];
+                    std::cout << "\n";
+                }
                 ++printed;
                 return limit == 0 || printed < limit;
             };
-            if (opt.by_cost) {  // `K[,K..]: atoms`, best first
+            if (opt.json) {
+                json.field("answer_sets");
+                std::cout << "[";
+            }
+            if (opt.by_cost) {  // best first
                 enumerate_by_cost(res, [&](const std::vector<long long>& cost, const std::vector<kyotodd::bddvar>& set) -> bool {
-                    std::string prefix;
-                    for (size_t c = 0; c < cost.size(); ++c) prefix += (c ? "," : "") + std::to_string(cost[c]);
-                    return print_set(prefix + ":", set);
+                    return emit_set(&cost, set);
                 });
             } else {
-                for_each_set(res.zdd, [&](const std::vector<kyotodd::bddvar>& set) -> bool { return print_set("", set); });
+                for_each_set(res.zdd, [&](const std::vector<kyotodd::bddvar>& set) -> bool { return emit_set(0, set); });
             }
+            if (opt.json) std::cout << (printed ? "\n  ]" : "]");
         }
+        if (opt.json) json.close();
 
         if (!opt.output.empty()) {
             std::ofstream out(opt.output.c_str(), std::ios::binary);
