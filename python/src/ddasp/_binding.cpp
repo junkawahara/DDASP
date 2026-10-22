@@ -409,7 +409,10 @@ PYBIND11_MODULE(_core, m) {
           "level, most important first) and `cost_slack` is an upper bound relative to the optimum, which is "
           "then reported; `cost_histogram` fills the (cost vector, count) list of the result and `best` the list of "
           "its first `best` (cost vector, shown names) in ascending cost order.");
-    py::register_exception<NodeLimitError>(m, "NodeLimitError", PyExc_RuntimeError);
+    // A module-local translator: it runs before the global ones, which other
+    // extensions register (kyotodd turns every std::exception into RuntimeError
+    // once it is imported, and would otherwise hide NodeLimitError).
+    py::register_local_exception<NodeLimitError>(m, "NodeLimitError", PyExc_RuntimeError);
 
     m.def("stored_dd_parts",
           [](const py::bytes& data) {
